@@ -17,7 +17,5 @@ export const COLORS = [
   Color.RED,
   Color.BLUE,
   Color.GREEN,
-  Color.YELLOW,
-  Color.PURPLE,
-  Color.ORANGE
+  Color.YELLOW
 ];

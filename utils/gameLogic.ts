@@ -38,14 +38,17 @@ export const createRandomGrid = (fillProbability: number = 0.3): (TileData | nul
   return grid;
 };
 
-export const generatePiece = (): PieceData => {
+export const generatePiece = (availableColors: Color[] = COLORS): PieceData => {
   const shape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
   
+  // Use provided colors, fallback to all colors if none provided
+  const sourceColors = availableColors.length > 0 ? availableColors : COLORS;
+
   return {
     id: Math.random().toString(36).substr(2, 9),
     shape: [...shape],
     // Assign a random color to each tile in the piece
-    colors: shape.map(() => COLORS[Math.floor(Math.random() * COLORS.length)])
+    colors: shape.map(() => sourceColors[Math.floor(Math.random() * sourceColors.length)])
   };
 };
 

@@ -4,8 +4,6 @@ export enum Color {
   BLUE = '#3b82f6',
   GREEN = '#22c55e',
   YELLOW = '#eab308',
-  PURPLE = '#a855f7',
-  ORANGE = '#f97316',
   EMPTY = 'transparent'
 }
 
@@ -17,6 +15,7 @@ export type Point = {
 export interface TileData {
   color: Color;
   id: string;
+  isBooster?: boolean;
 }
 
 export interface PieceData {

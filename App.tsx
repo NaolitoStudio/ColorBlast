@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { GameState, PieceData, Point } from './types';
+import { GameState, PieceData, Point, Color, TileData } from './types';
 import { createRandomGrid, generatePiece, canPlacePiece, findMatchGroups, isGameOver, calculateScore } from './utils/gameLogic';
-import { GRID_SIZE } from './constants';
+import { GRID_SIZE, COLORS } from './constants';
 
 const DRAG_OFFSET_Y = 100; // How much the piece is lifted above the finger/cursor
 
@@ -91,6 +91,64 @@ const App: React.FC = () => {
       localStorage.setItem('highScore', gameState.score.toString());
     }
   }, [gameState.score, gameState.highScore]);
+
+  // Automatic Booster Activation
+  useEffect(() => {
+    if (gameState.gameOver || gameState.clearingTiles.length > 0) return;
+
+    let bestBoosterMove: { boosterX: number, boosterY: number, targetX: number, targetY: number, color: Color, matchSize: number } | null = null;
+
+    // Scan the grid for boosters
+    gameState.grid.forEach((row, y) => {
+      row.forEach((cell, x) => {
+        if (cell && cell.isBooster) {
+          // Check for best move from this booster
+          // We need to re-implement the search logic here or refactor it
+          // Search vertical and horizontal lines
+          const directions = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+          for (const [dx, dy] of directions) {
+            let curX = x + dx;
+            let curY = y + dy;
+            while (curX >= 0 && curX < GRID_SIZE && curY >= 0 && curY < GRID_SIZE) {
+              if (gameState.grid[curY][curX] === null) {
+                for (const testColor of COLORS) {
+                  const tempGrid = gameState.grid.map(r => r.map(c => c ? { ...c } : null));
+                  tempGrid[curY][curX] = { color: testColor, id: 'booster-temp' };
+                  const matches = findMatchGroups(tempGrid);
+                  const boosterMatch = matches.find(group => 
+                    group.some(p => p.x === curX && p.y === curY)
+                  );
+                  
+                  if (boosterMatch && boosterMatch.length >= 3) {
+                    if (!bestBoosterMove || boosterMatch.length > bestBoosterMove.matchSize) {
+                      bestBoosterMove = {
+                        boosterX: x,
+                        boosterY: y,
+                        targetX: curX,
+                        targetY: curY,
+                        color: testColor,
+                        matchSize: boosterMatch.length
+                      };
+                    }
+                  }
+                }
+              }
+              curX += dx;
+              curY += dy;
+            }
+          }
+        }
+      });
+    });
+
+    if (bestBoosterMove) {
+      // Small delay to let the board settle
+      const timeout = setTimeout(() => {
+        activateBooster(bestBoosterMove!.boosterX, bestBoosterMove!.boosterY, bestBoosterMove!.color, { x: bestBoosterMove!.targetX, y: bestBoosterMove!.targetY });
+      }, 600);
+      return () => clearTimeout(timeout);
+    }
+  }, [gameState.grid, gameState.gameOver, gameState.clearingTiles.length]);
 
   const triggerShake = () => {
     setIsShaking(true);
@@ -204,6 +262,106 @@ const App: React.FC = () => {
     setHoveredCell(null);
   };
 
+  const activateBooster = (x: number, y: number, chosenColor: Color, target: { x: number, y: number }) => {
+    const targetX = target.x;
+    const targetY = target.y;
+    
+    // Visual feedback: Place the square briefly
+    const boosterTileId = `booster-placed-${Date.now()}`;
+    setGameState(prev => {
+      const newGrid = prev.grid.map(row => [...row]);
+      newGrid[y][x] = null; // Remove booster
+      newGrid[targetY][targetX] = { color: chosenColor, id: boosterTileId };
+      return { ...prev, grid: newGrid };
+    });
+
+    if (boardRef.current) {
+      const rect = boardRef.current.getBoundingClientRect();
+      const cellSize = rect.width / GRID_SIZE;
+      const cellCenterX = rect.left + (targetX * cellSize) + (cellSize / 2);
+      const cellCenterY = rect.top + (targetY * cellSize) + (cellSize / 2);
+      spawnParticles(cellCenterX, cellCenterY, chosenColor, 10);
+    }
+
+    setTimeout(() => {
+      setGameState(prev => {
+        const matchGroups = findMatchGroups(prev.grid);
+        if (matchGroups.length > 0) {
+          const allClearedPoints = matchGroups.flat();
+          const totalCleared = allClearedPoints.length;
+          const newCombo = prev.combo + 1;
+          const { score: moveScore, text, multiplier } = calculateScore(totalCleared, newCombo);
+          const matchingIds = allClearedPoints.map(p => prev.grid[p.y][p.x]!.id);
+          
+          // Visuals
+          if (boardRef.current) {
+            const rect = boardRef.current.getBoundingClientRect();
+            const cellSize = rect.width / GRID_SIZE;
+            allClearedPoints.forEach(p => {
+              const cellCenterX = rect.left + (p.x * cellSize) + (cellSize / 2);
+              const cellCenterY = rect.top + (p.y * cellSize) + (cellSize / 2);
+              const color = prev.grid[p.y][p.x]!.color;
+              spawnParticles(cellCenterX, cellCenterY, color, 6);
+            });
+            if (text) {
+              const avgX = allClearedPoints.reduce((acc, p) => acc + p.x, 0) / totalCleared;
+              const avgY = allClearedPoints.reduce((acc, p) => acc + p.y, 0) / totalCleared;
+              const screenX = rect.left + (avgX * cellSize) + (cellSize / 2);
+              const screenY = rect.top + (avgY * cellSize) + (cellSize / 2);
+              spawnFloatingText(screenX, screenY, `${text} x${multiplier}`);
+            }
+          }
+          triggerShake();
+
+          setTimeout(() => {
+            setGameState(s => {
+              const finalGrid = s.grid.map(row => 
+                row.map(cell => cell && matchingIds.includes(cell.id) ? null : cell)
+              );
+
+              // Update hand with available colors
+              const availableColors = getAvailableColors(finalGrid);
+              const updatedHand = s.hand.map(p => {
+                if (!p) return null;
+                return {
+                  ...p,
+                  colors: p.colors.map(c => availableColors.includes(c) ? c : (availableColors[Math.floor(Math.random() * availableColors.length)] || c))
+                };
+              });
+
+              return {
+                ...s,
+                grid: finalGrid,
+                hand: updatedHand,
+                score: s.score + moveScore,
+                clearingTiles: [],
+                combo: newCombo,
+                gameOver: isGameOver(finalGrid, updatedHand)
+              };
+            });
+          }, 400);
+
+          return { ...prev, clearingTiles: matchingIds };
+        }
+        return prev;
+      });
+    }, 500);
+  };
+
+  const handleTileClick = (x: number, y: number) => {
+    // Boosters are now automatic, no click handling needed
+  };
+
+  const getAvailableColors = (currentGrid: (TileData | null)[][]): Color[] => {
+    const presentColors = new Set<Color>();
+    currentGrid.forEach(row => {
+      row.forEach(cell => {
+        if (cell) presentColors.add(cell.color);
+      });
+    });
+    return COLORS.filter(c => presentColors.has(c));
+  };
+
   const placePieceAt = (x: number, y: number) => {
     const { selectedPieceIndex, hand, grid, score, combo } = gameState;
     const piece = hand[selectedPieceIndex!];
@@ -221,9 +379,10 @@ const App: React.FC = () => {
       newHand[selectedPieceIndex!] = null;
 
       if (newHand.every(p => p === null)) {
-        newHand[0] = generatePiece();
-        newHand[1] = generatePiece();
-        newHand[2] = generatePiece();
+        const availableColors = getAvailableColors(newGrid);
+        newHand[0] = generatePiece(availableColors);
+        newHand[1] = generatePiece(availableColors);
+        newHand[2] = generatePiece(availableColors);
       }
 
       const matchGroups = findMatchGroups(newGrid);
@@ -234,10 +393,32 @@ const App: React.FC = () => {
         const totalCleared = allClearedPoints.length;
         const newCombo = combo + 1;
         
+        // Booster spawning logic
+        let boosterSpawned = false;
+        matchGroups.forEach(group => {
+          if (group.length >= 4) {
+            const spawnPos = group[Math.floor(Math.random() * group.length)];
+            // We'll mark this tile as a booster in the next state update, 
+            // but wait, the group is about to be cleared.
+            // Requirement says "leave a booster on one of the 4 squares".
+            // So we need to NOT clear that one square, or replace it.
+          }
+        });
+
         // Use updated scoring logic
         const { score: moveScore, text, multiplier } = calculateScore(totalCleared, newCombo);
         const newScore = score + moveScore;
         const matchingIds = allClearedPoints.map(p => newGrid[p.y][p.x]!.id);
+
+        // Identify which tiles will become boosters
+        const boosterTiles: {x: number, y: number, color: Color}[] = [];
+        matchGroups.forEach(group => {
+          if (group.length >= 4) {
+            const p = group[Math.floor(Math.random() * group.length)];
+            boosterTiles.push({ x: p.x, y: p.y, color: newGrid[p.y][p.x]!.color });
+          }
+        });
+        const boosterIds = boosterTiles.map(bt => newGrid[bt.y][bt.x]!.id);
         
         // Spawn Visuals
         if (boardRef.current) {
@@ -270,14 +451,21 @@ const App: React.FC = () => {
           score: newScore, 
           hand: newHand, 
           selectedPieceIndex: null,
-          clearingTiles: matchingIds,
+          clearingTiles: matchingIds.filter(id => !boosterIds.includes(id)),
           combo: newCombo
         }));
 
         setTimeout(() => {
           setGameState(prev => {
-            const finalGrid = prev.grid.map(row => 
-              row.map(cell => cell && matchingIds.includes(cell.id) ? null : cell)
+            const finalGrid = prev.grid.map((row, ry) => 
+              row.map((cell, rx) => {
+                if (!cell) return null;
+                const booster = boosterTiles.find(bt => bt.x === rx && bt.y === ry);
+                if (booster) {
+                   return { ...cell, isBooster: true, id: `booster-${Date.now()}-${Math.random()}` };
+                }
+                return matchingIds.includes(cell.id) ? null : cell;
+              })
             );
             const lost = isGameOver(finalGrid, prev.hand);
             return {
@@ -321,6 +509,15 @@ const App: React.FC = () => {
       return { color: piece.colors[ghostPointIndex], isValid };
     }
     return null;
+  };
+
+  const getIsOnBoosterLine = (x: number, y: number) => {
+    // Check if any booster exists in the same row or column
+    return gameState.grid.some((row, ry) => 
+      row.some((cell, rx) => 
+        cell?.isBooster && (rx === x || ry === y)
+      )
+    );
   };
 
   return (
@@ -443,22 +640,30 @@ const App: React.FC = () => {
           {gameState.grid.map((row, y) => 
             row.map((cell, x) => {
               const ghost = isGhostCell(x, y);
+              const isOnBoosterLine = !cell && getIsOnBoosterLine(x, y);
               return (
                 <div 
                   key={`${x}-${y}`}
                   className={`
                     relative rounded-lg transition-all duration-300
-                    ${cell ? 'shadow-[0_4px_10px_rgba(0,0,0,0.3)]' : 'bg-slate-800/30 border border-white/5'}
+                    ${cell ? 'shadow-[0_4px_10px_rgba(0,0,0,0.3)]' : (isOnBoosterLine ? 'bg-slate-700/40' : 'bg-slate-800/30')}
+                    ${!cell ? 'border border-white/5' : ''}
                   `}
                   style={{ 
-                    backgroundColor: cell?.color || (ghost ? ghost.color : 'rgba(30, 41, 59, 0.3)'),
+                    backgroundColor: cell?.isBooster ? '#475569' : (cell?.color || (ghost ? ghost.color : undefined)),
                     opacity: ghost ? (ghost.isValid ? 0.7 : 0.15) : 1,
                     transform: gameState.clearingTiles.includes(cell?.id || '') 
                       ? 'scale(0) rotate(90deg)' 
                       : (ghost && ghost.isValid ? 'scale(0.95)' : 'scale(1)'),
-                    boxShadow: cell ? `inset 0 2px 4px rgba(255,255,255,0.2), 0 4px 8px rgba(0,0,0,0.4)` : 'none'
+                    boxShadow: cell ? `inset 0 2px 4px rgba(255,255,255,0.2), 0 4px 8px rgba(0,0,0,0.4)` : 'none',
+                    border: cell?.isBooster ? '3px solid white' : undefined
                   }}
                 >
+                  {cell?.isBooster && (
+                    <div className="absolute inset-0 flex items-center justify-center animate-pulse">
+                      <i className="fa-solid fa-bolt text-white text-xs sm:text-lg"></i>
+                    </div>
+                  )}
                   {cell && (
                     <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent rounded-lg pointer-events-none" />
                   )}
