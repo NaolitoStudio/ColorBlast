@@ -211,6 +211,79 @@ export const findMatchGroups = (grid: (TileData | null)[][]): Point[][] => {
   return allGroups;
 };
 
+/**
+ * Get all 8 neighbors (including diagonals) around a point
+ */
+export const getAllNeighbors = (p: Point): Point[] => [
+  { x: p.x - 1, y: p.y - 1 }, { x: p.x, y: p.y - 1 }, { x: p.x + 1, y: p.y - 1 },
+  { x: p.x - 1, y: p.y },                              { x: p.x + 1, y: p.y },
+  { x: p.x - 1, y: p.y + 1 }, { x: p.x, y: p.y + 1 }, { x: p.x + 1, y: p.y + 1 }
+];
+
+/**
+ * Find the most centered point in a group
+ */
+export const findGroupCenter = (group: Point[]): Point => {
+  const avgX = group.reduce((sum, p) => sum + p.x, 0) / group.length;
+  const avgY = group.reduce((sum, p) => sum + p.y, 0) / group.length;
+
+  // Find the point closest to the center
+  let closest = group[0];
+  let minDist = Infinity;
+
+  group.forEach(p => {
+    const dist = Math.abs(p.x - avgX) + Math.abs(p.y - avgY);
+    if (dist < minDist) {
+      minDist = dist;
+      closest = p;
+    }
+  });
+
+  return closest;
+};
+
+/**
+ * Get explosion radius points for a bomb
+ */
+export const getBombExplosionPoints = (
+  center: Point,
+  layers: number,
+  grid: (TileData | null)[][]
+): Point[] => {
+  const points: Point[] = [];
+  const visited = new Set<string>();
+  visited.add(`${center.x},${center.y}`);
+
+  let currentLayer = [center];
+
+  for (let layer = 0; layer < layers; layer++) {
+    const nextLayer: Point[] = [];
+
+    currentLayer.forEach(p => {
+      const neighbors = getAllNeighbors(p);
+      neighbors.forEach(n => {
+        const key = `${n.x},${n.y}`;
+        if (
+          n.x >= 0 && n.x < GRID_SIZE &&
+          n.y >= 0 && n.y < GRID_SIZE &&
+          !visited.has(key)
+        ) {
+          visited.add(key);
+          nextLayer.push(n);
+          // Only add if there's a tile there (not empty, not the bomb itself)
+          if (grid[n.y][n.x] !== null) {
+            points.push(n);
+          }
+        }
+      });
+    });
+
+    currentLayer = nextLayer;
+  }
+
+  return points;
+};
+
 export const isGameOver = (grid: (TileData | null)[][], hand: (PieceData | null)[]): boolean => {
   const activePieces = hand.filter(p => p !== null);
   if (activePieces.length === 0) return false;
