@@ -88,7 +88,7 @@ const App: React.FC = () => {
   // Powerup uses (reset each level)
   const [trashUses, setTrashUses] = useState(1);
   const [shuffleUses, setShuffleUses] = useState(3);
-  const [deleteBlockUses, setDeleteBlockUses] = useState(1);
+  const [deleteBlockUses, setDeleteBlockUses] = useState(3);
   const [deleteBlockMode, setDeleteBlockMode] = useState(false);
   const [showAdPopup, setShowAdPopup] = useState(false);
   const [pendingTrashIndex, setPendingTrashIndex] = useState<number | null>(null);
@@ -564,7 +564,7 @@ const App: React.FC = () => {
     setShowAllClear(false);
     setTrashUses(1);
     setShuffleUses(3);
-    setDeleteBlockUses(1);
+    setDeleteBlockUses(3);
   };
 
   const handleNextLevel = () => {
@@ -591,7 +591,7 @@ const App: React.FC = () => {
     setShowAllClear(false);
     setTrashUses(1);
     setShuffleUses(3);
-    setDeleteBlockUses(1);
+    setDeleteBlockUses(3);
   };
 
   // Handle deleting a single block from the board
@@ -2454,95 +2454,98 @@ const App: React.FC = () => {
             ))}
           </div>
         </div>
-
-        {/* Powerup Buttons */}
-        <div className="flex justify-center gap-6 mt-4">
-          {/* Delete Block Button */}
-          <button
-            onClick={() => deleteBlockUses > 0 && !shufflePhase && !trashSelectMode && !deleteBlockMode && setDeleteBlockMode(true)}
-            disabled={deleteBlockUses <= 0 || !!shufflePhase || trashSelectMode || deleteBlockMode}
-            className={`
-              w-16 h-16 rounded-full flex items-center justify-center relative
-              transition-all duration-200 active:scale-95
-              ${deleteBlockUses > 0 && !deleteBlockMode ? 'bg-gradient-to-br from-cyan-500 to-blue-600 shadow-lg shadow-cyan-500/30' : 'bg-slate-700 opacity-50'}
-            `}
-          >
-            <i className="fa-solid fa-crosshairs text-2xl text-white"></i>
-            {deleteBlockUses > 0 && (
-              <div className="absolute -top-1 -right-1 w-5 h-5 bg-yellow-400 rounded-full flex items-center justify-center text-[10px] font-bold text-black">
-                {deleteBlockUses}
-              </div>
-            )}
-          </button>
-
-          {/* Shuffle Button */}
-          <button
-            onClick={() => shuffleUses > 0 && !shufflePhase && !trashSelectMode && !deleteBlockMode && activateShuffle()}
-            disabled={shuffleUses <= 0 || !!shufflePhase || trashSelectMode || deleteBlockMode}
-            className={`
-              w-16 h-16 rounded-full flex items-center justify-center relative
-              transition-all duration-200 active:scale-95
-              ${shuffleUses > 0 && !shufflePhase && !deleteBlockMode ? 'bg-gradient-to-br from-purple-500 to-indigo-600 shadow-lg shadow-purple-500/30' : 'bg-slate-700 opacity-50'}
-            `}
-          >
-            <i className="fa-solid fa-shuffle text-2xl text-white"></i>
-            {shuffleUses > 0 && (
-              <div className="absolute -top-1 -right-1 w-5 h-5 bg-yellow-400 rounded-full flex items-center justify-center text-[10px] font-bold text-black">
-                {shuffleUses}
-              </div>
-            )}
-          </button>
-
-          {/* Trash Button */}
-          <button
-            onClick={() => trashUses > 0 && !shufflePhase && !trashSelectMode && !deleteBlockMode && setTrashSelectMode(true)}
-            disabled={trashUses <= 0 || !!shufflePhase || trashSelectMode || deleteBlockMode}
-            className={`
-              w-16 h-16 rounded-full flex items-center justify-center relative
-              transition-all duration-200 active:scale-95
-              ${trashUses > 0 && !trashSelectMode && !deleteBlockMode ? 'bg-gradient-to-br from-red-500 to-orange-600 shadow-lg shadow-red-500/30' : 'bg-slate-700 opacity-50'}
-            `}
-          >
-            <i className="fa-solid fa-trash text-2xl text-white"></i>
-            {trashUses > 0 && (
-              <div className="absolute -top-1 -right-1 w-5 h-5 bg-yellow-400 rounded-full flex items-center justify-center text-[10px] font-bold text-black">
-                {trashUses}
-              </div>
-            )}
-          </button>
-        </div>
-
-        {/* Delete Block Overlay */}
-        {deleteBlockMode && (
-          <div
-            className="fixed inset-0 bg-black/70 z-40"
-            onClick={() => setDeleteBlockMode(false)}
-          >
-            <div className="absolute top-8 left-0 right-0 text-center text-white pointer-events-none">
-              <p className="text-xl font-bold mb-2">Select a block to destroy</p>
-              <p className="text-sm text-slate-400">Tap a block or anywhere to cancel</p>
-            </div>
-          </div>
-        )}
-
-        {/* Trash Select Overlay */}
-        {trashSelectMode && (
-          <div
-            className="fixed inset-0 bg-black/70 z-40 flex items-center justify-center"
-            onClick={() => setTrashSelectMode(false)}
-          >
-            <div className="text-center text-white pointer-events-none">
-              <p className="text-xl font-bold mb-2">Select a piece to discard</p>
-              <p className="text-sm text-slate-400">Tap a piece box or anywhere to cancel</p>
-            </div>
-          </div>
-        )}
-
-        {/* Shuffle Overlay */}
-        {shufflePhase && (
-          <div className="fixed inset-0 bg-black/50 z-30 pointer-events-none" />
-        )}
       </div>
+
+      {/* Spacer to push powerups to bottom */}
+      <div className="flex-grow" />
+
+      {/* Powerup Buttons - Fixed at bottom */}
+      <div className="flex justify-center gap-4 sm:gap-6 pb-4 pt-2">
+        {/* Delete Block Button */}
+        <button
+          onClick={() => deleteBlockUses > 0 && !shufflePhase && !trashSelectMode && !deleteBlockMode && setDeleteBlockMode(true)}
+          disabled={deleteBlockUses <= 0 || !!shufflePhase || trashSelectMode || deleteBlockMode}
+          className={`
+            w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center relative
+            transition-all duration-200 active:scale-95
+            ${deleteBlockUses > 0 && !deleteBlockMode ? 'bg-gradient-to-br from-cyan-500 to-blue-600 shadow-lg shadow-cyan-500/30' : 'bg-slate-700 opacity-50'}
+          `}
+        >
+          <i className="fa-solid fa-crosshairs text-lg sm:text-xl md:text-2xl text-white"></i>
+          {deleteBlockUses > 0 && (
+            <div className="absolute -top-1 -right-1 w-4 h-4 sm:w-5 sm:h-5 bg-yellow-400 rounded-full flex items-center justify-center text-[8px] sm:text-[10px] font-bold text-black">
+              {deleteBlockUses}
+            </div>
+          )}
+        </button>
+
+        {/* Shuffle Button */}
+        <button
+          onClick={() => shuffleUses > 0 && !shufflePhase && !trashSelectMode && !deleteBlockMode && activateShuffle()}
+          disabled={shuffleUses <= 0 || !!shufflePhase || trashSelectMode || deleteBlockMode}
+          className={`
+            w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center relative
+            transition-all duration-200 active:scale-95
+            ${shuffleUses > 0 && !shufflePhase && !deleteBlockMode ? 'bg-gradient-to-br from-purple-500 to-indigo-600 shadow-lg shadow-purple-500/30' : 'bg-slate-700 opacity-50'}
+          `}
+        >
+          <i className="fa-solid fa-shuffle text-lg sm:text-xl md:text-2xl text-white"></i>
+          {shuffleUses > 0 && (
+            <div className="absolute -top-1 -right-1 w-4 h-4 sm:w-5 sm:h-5 bg-yellow-400 rounded-full flex items-center justify-center text-[8px] sm:text-[10px] font-bold text-black">
+              {shuffleUses}
+            </div>
+          )}
+        </button>
+
+        {/* Trash Button */}
+        <button
+          onClick={() => trashUses > 0 && !shufflePhase && !trashSelectMode && !deleteBlockMode && setTrashSelectMode(true)}
+          disabled={trashUses <= 0 || !!shufflePhase || trashSelectMode || deleteBlockMode}
+          className={`
+            w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center relative
+            transition-all duration-200 active:scale-95
+            ${trashUses > 0 && !trashSelectMode && !deleteBlockMode ? 'bg-gradient-to-br from-red-500 to-orange-600 shadow-lg shadow-red-500/30' : 'bg-slate-700 opacity-50'}
+          `}
+        >
+          <i className="fa-solid fa-trash text-lg sm:text-xl md:text-2xl text-white"></i>
+          {trashUses > 0 && (
+            <div className="absolute -top-1 -right-1 w-4 h-4 sm:w-5 sm:h-5 bg-yellow-400 rounded-full flex items-center justify-center text-[8px] sm:text-[10px] font-bold text-black">
+              {trashUses}
+            </div>
+          )}
+        </button>
+      </div>
+
+      {/* Delete Block Overlay */}
+      {deleteBlockMode && (
+        <div
+          className="fixed inset-0 bg-black/70 z-40"
+          onClick={() => setDeleteBlockMode(false)}
+        >
+          <div className="absolute top-8 left-0 right-0 text-center text-white pointer-events-none">
+            <p className="text-xl font-bold mb-2">Select a block to destroy</p>
+            <p className="text-sm text-slate-400">Tap a block or anywhere to cancel</p>
+          </div>
+        </div>
+      )}
+
+      {/* Trash Select Overlay */}
+      {trashSelectMode && (
+        <div
+          className="fixed inset-0 bg-black/70 z-40 flex items-center justify-center"
+          onClick={() => setTrashSelectMode(false)}
+        >
+          <div className="text-center text-white pointer-events-none">
+            <p className="text-xl font-bold mb-2">Select a piece to discard</p>
+            <p className="text-sm text-slate-400">Tap a piece box or anywhere to cancel</p>
+          </div>
+        </div>
+      )}
+
+      {/* Shuffle Overlay */}
+      {shufflePhase && (
+        <div className="fixed inset-0 bg-black/50 z-30 pointer-events-none" />
+      )}
 
       {/* Ad Popup Modal */}
       {showAdPopup && (
