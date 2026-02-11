@@ -1,28 +1,67 @@
 
-import { Color, Point, LevelConfig } from './types';
+import { Color, Point } from './types';
+
+export interface LevelConfig {
+  level: number;
+  objectives: { color: Color; target: number }[];
+  gridFill: number;
+  lockedTileChance?: number; // Probability of a tile being locked (level 5+)
+}
 
 export const GRID_SIZE = 8;
 
 export const SHAPES: Point[][] = [
-  // Single blocks
-  [{ x: 0, y: 0 }], // Single Dot
+  // === BASIC SHAPES ===
+
+  // Single dot
+  [{ x: 0, y: 0 }],
 
   // Lines of 2
-  [{ x: 0, y: 0 }, { x: 1, y: 0 }], // Horizontal Line 2
-  [{ x: 0, y: 0 }, { x: 0, y: 1 }], // Vertical Line 2
+  [{ x: 0, y: 0 }, { x: 1, y: 0 }], // Horizontal
+  [{ x: 0, y: 0 }, { x: 0, y: 1 }], // Vertical
 
   // Lines of 3
-  [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }], // Horizontal Line 3
-  [{ x: 0, y: 0 }, { x: 0, y: 1 }, { x: 0, y: 2 }], // Vertical Line 3
+  [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }], // Horizontal
+  [{ x: 0, y: 0 }, { x: 0, y: 1 }, { x: 0, y: 2 }], // Vertical
 
-  // Small L - all 4 rotations
-  [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }], // L rotation 0 (top-left corner)
-  [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }], // L rotation 1 (top-right corner)
-  [{ x: 0, y: 1 }, { x: 1, y: 1 }, { x: 1, y: 0 }], // L rotation 2 (bottom-right corner)
-  [{ x: 0, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }], // L rotation 3 (bottom-left corner)
-
-  // Square 2x2
+  // Square 2x2 (O piece)
   [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }],
+
+  // === SMALL L (3 blocks) ===
+  [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }], // ┘
+  [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }], // └
+  [{ x: 1, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }], // ┌
+  [{ x: 0, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }], // ┐
+
+  // === TETRIS I (4 blocks) ===
+  [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }], // Horizontal
+  [{ x: 0, y: 0 }, { x: 0, y: 1 }, { x: 0, y: 2 }, { x: 0, y: 3 }], // Vertical
+
+  // === TETRIS T (4 blocks) ===
+  [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 1, y: 1 }], // T down
+  [{ x: 1, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }, { x: 1, y: 2 }], // T right
+  [{ x: 1, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }, { x: 2, y: 1 }], // T up
+  [{ x: 0, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }, { x: 0, y: 2 }], // T left
+
+  // === TETRIS L (4 blocks) ===
+  [{ x: 0, y: 0 }, { x: 0, y: 1 }, { x: 0, y: 2 }, { x: 1, y: 2 }], // L
+  [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 0, y: 1 }], // L rotated 90
+  [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 1, y: 2 }], // L rotated 180
+  [{ x: 2, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }, { x: 2, y: 1 }], // L rotated 270
+
+  // === TETRIS J (4 blocks) - mirror of L ===
+  [{ x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 2 }, { x: 1, y: 2 }], // J
+  [{ x: 0, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }, { x: 2, y: 1 }], // J rotated 90
+  [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: 2 }], // J rotated 180
+  [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 2, y: 1 }], // J rotated 270
+
+  // === TETRIS Z (4 blocks) ===
+  [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 2, y: 1 }], // Z horizontal
+  [{ x: 1, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }, { x: 0, y: 2 }], // Z vertical
+
+  // === TETRIS S (4 blocks) - mirror of Z ===
+  [{ x: 1, y: 0 }, { x: 2, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }], // S horizontal
+  [{ x: 0, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }, { x: 1, y: 2 }], // S vertical
 ];
 
 export const COLORS = [
@@ -63,15 +102,36 @@ export const LEVELS: LevelConfig[] = [
       { color: Color.YELLOW, target: 15 }
     ],
     gridFill: 0.30
+  },
+  {
+    level: 4,
+    objectives: [
+      { color: Color.RED, target: 30 },
+      { color: Color.BLUE, target: 30 },
+      { color: Color.GREEN, target: 25 },
+      { color: Color.YELLOW, target: 20 }
+    ],
+    gridFill: 0.32
+  },
+  {
+    level: 5,
+    objectives: [
+      { color: Color.RED, target: 35 },
+      { color: Color.BLUE, target: 35 },
+      { color: Color.GREEN, target: 30 },
+      { color: Color.YELLOW, target: 25 }
+    ],
+    gridFill: 0.50,
+    lockedTileChance: 0.25
   }
 ];
 
-// Get level config - levels beyond 3 scale up with 4 colors
+// Get level config - levels beyond 5 scale up with 4 colors
 export const getLevelConfig = (level: number): LevelConfig => {
   if (level <= LEVELS.length) {
     return LEVELS[level - 1];
   }
-  // For levels beyond 3, scale up with 4 colors
+  // For levels beyond 5, scale up with 4 colors
   const baseLevel = LEVELS[LEVELS.length - 1];
   const multiplier = 1 + (level - LEVELS.length) * 0.15;
   return {
@@ -80,6 +140,7 @@ export const getLevelConfig = (level: number): LevelConfig => {
       color: obj.color,
       target: Math.round(obj.target * multiplier)
     })),
-    gridFill: Math.min(baseLevel.gridFill + (level - LEVELS.length) * 0.02, 0.40)
+    gridFill: Math.min(baseLevel.gridFill + (level - LEVELS.length) * 0.02, 0.40),
+    lockedTileChance: baseLevel.lockedTileChance
   };
 };

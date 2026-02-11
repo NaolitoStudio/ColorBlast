@@ -26,6 +26,7 @@ export interface BoosterData {
 export interface TileData {
   color: Color;
   id: string;
+  locked?: boolean; // Locked tiles don't participate in matches until unlocked
 }
 
 export interface PieceData {

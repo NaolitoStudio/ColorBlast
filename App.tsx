@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { GameState, PieceData, Point, Color, LevelObjective, Booster, BoosterType } from './types';
-import { createRandomGrid, generatePiece, generateValidHand, canPlacePiece, findMatchGroups, findGroupCenter, getBombExplosionPoints, isGameOver, calculateScore, initializeObjectives } from './utils/gameLogic';
+import { createRandomGrid, generatePiece, generateValidHand, canPlacePiece, findMatchGroups, findGroupCenter, getBombExplosionPoints, isGameOver, calculateScore, initializeObjectives, getAdjacentToMatches } from './utils/gameLogic';
 import { GRID_SIZE, getLevelConfig } from './constants';
 
 const DRAG_OFFSET_Y = 100; // How much the piece is lifted above the finger/cursor
@@ -31,7 +31,7 @@ interface FloatingText {
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(() => {
-    const initialLevel = 1;
+    const initialLevel = 5;
     const levelConfig = getLevelConfig(initialLevel);
     const initialGrid = createRandomGrid(levelConfig.gridFill, initialLevel);
     const initialHand = generateValidHand(initialGrid, initialLevel);
@@ -63,8 +63,18 @@ const App: React.FC = () => {
   const [showAllClear, setShowAllClear] = useState(false);
   const [affectedCells, setAffectedCells] = useState<Set<string>>(new Set());
   const [affectedColor, setAffectedColor] = useState<string>('transparent');
+  const [hoveredPowerup, setHoveredPowerup] = useState<'trash' | null>(null);
+
+  // Powerup uses (reset each level)
+  const [trashUses, setTrashUses] = useState(1);
+  const [showAdPopup, setShowAdPopup] = useState(false);
+  const [pendingTrashIndex, setPendingTrashIndex] = useState<number | null>(null);
+  const [watchingAd, setWatchingAd] = useState(false);
+  const [trashingPieceIndex, setTrashingPieceIndex] = useState<number | null>(null);
 
   const boardRef = useRef<HTMLDivElement>(null);
+  const trashRef = useRef<HTMLDivElement>(null);
+  const pieceRefs = useRef<(HTMLDivElement | null)[]>([null, null, null]);
 
   // Animation Loop
   useEffect(() => {
@@ -388,7 +398,7 @@ const App: React.FC = () => {
   };
 
   const handleRestart = () => {
-    const initialLevel = 1;
+    const initialLevel = 5;
     const levelConfig = getLevelConfig(initialLevel);
     const initialGrid = createRandomGrid(levelConfig.gridFill, initialLevel);
     setGameState({
@@ -410,6 +420,7 @@ const App: React.FC = () => {
     setCelebrating(false);
     setShowLevelPopup(false);
     setShowAllClear(false);
+    setTrashUses(1);
   };
 
   const handleNextLevel = () => {
@@ -434,6 +445,7 @@ const App: React.FC = () => {
     setCelebrating(false);
     setShowLevelPopup(false);
     setShowAllClear(false);
+    setTrashUses(1);
   };
 
   // Handle clicking on a booster to activate it
@@ -461,43 +473,138 @@ const App: React.FC = () => {
     executeBoosterExplosion(booster);
   };
 
-  // Execute the actual booster explosion
-  const executeBoosterExplosion = (booster: Booster) => {
-    let pointsToRemove: Point[] = [];
-    let effectText = '';
-    let bonusMultiplier = 1;
-
-    const newGrid = gameState.grid.map(row => [...row]);
-
+  // Get points affected by a booster explosion
+  const getBoosterExplosionPoints = (booster: Booster, grid: (typeof gameState.grid)): Point[] => {
+    const points: Point[] = [];
     if (booster.type === 'line_bomb') {
-      // Remove entire row AND column
       for (let i = 0; i < GRID_SIZE; i++) {
-        if (newGrid[booster.y][i]) pointsToRemove.push({ x: i, y: booster.y });
-        if (newGrid[i][booster.x] && i !== booster.y) pointsToRemove.push({ x: booster.x, y: i });
+        points.push({ x: i, y: booster.y }); // Row
+        if (i !== booster.y) points.push({ x: booster.x, y: i }); // Column
       }
-      effectText = '💣 LINE BLAST!';
-      bonusMultiplier = 1.5;
     } else if (booster.type === 'bomb') {
-      // Remove 1 layer around (8 neighbors)
-      pointsToRemove = getBombExplosionPoints({ x: booster.x, y: booster.y }, 1, newGrid);
-      effectText = '💥 BOOM!';
-      bonusMultiplier = 2;
-    } else if (booster.type === 'color_ball') {
-      // Remove ALL tiles of the booster's color
-      for (let y = 0; y < GRID_SIZE; y++) {
-        for (let x = 0; x < GRID_SIZE; x++) {
-          if (newGrid[y][x]?.color === booster.color) {
-            pointsToRemove.push({ x, y });
+      // 8 neighbors + center
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = booster.x + dx;
+          const ny = booster.y + dy;
+          if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE) {
+            points.push({ x: nx, y: ny });
           }
         }
       }
-      effectText = '🌈 COLOR BLAST!';
-      bonusMultiplier = 3;
+    } else if (booster.type === 'color_ball') {
+      for (let y = 0; y < GRID_SIZE; y++) {
+        for (let x = 0; x < GRID_SIZE; x++) {
+          if (grid[y][x]?.color === booster.color) {
+            points.push({ x, y });
+          }
+        }
+      }
+      points.push({ x: booster.x, y: booster.y }); // Include booster position
+    }
+    return points;
+  };
+
+  // Execute the actual booster explosion with CHAIN REACTIONS
+  const executeBoosterExplosion = (initialBooster: Booster) => {
+    const newGrid = gameState.grid.map(row => [...row]);
+    let currentBoosters = [...gameState.boosters];
+    let allPointsToRemove: Point[] = [];
+    let totalScore = 0;
+    let chainCount = 0;
+
+    // Queue of boosters to explode
+    const boosterQueue: Booster[] = [initialBooster];
+    const explodedBoosterIds = new Set<string>();
+
+    while (boosterQueue.length > 0) {
+      const booster = boosterQueue.shift()!;
+      if (explodedBoosterIds.has(booster.id)) continue;
+      explodedBoosterIds.add(booster.id);
+      chainCount++;
+
+      let effectText = '';
+      let bonusMultiplier = 1;
+
+      if (booster.type === 'line_bomb') {
+        effectText = '💣 LINE BLAST!';
+        bonusMultiplier = 1.5;
+      } else if (booster.type === 'bomb') {
+        effectText = '💥 BOOM!';
+        bonusMultiplier = 2;
+      } else if (booster.type === 'color_ball') {
+        effectText = '🌈 COLOR BLAST!';
+        bonusMultiplier = 3;
+      }
+
+      const pointsFromThisBooster = getBoosterExplosionPoints(booster, newGrid);
+
+      // Spawn visuals for this booster
+      if (boardRef.current) {
+        const rect = boardRef.current.getBoundingClientRect();
+        const cellSize = rect.width / GRID_SIZE;
+        const boosterCenterX = rect.left + (booster.x * cellSize) + (cellSize / 2);
+        const boosterCenterY = rect.top + (booster.y * cellSize) + (cellSize / 2);
+
+        // Particles for each exploded block
+        pointsFromThisBooster.forEach(p => {
+          const tile = newGrid[p.y]?.[p.x];
+          if (tile) {
+            const cellCenterX = rect.left + (p.x * cellSize) + (cellSize / 2);
+            const cellCenterY = rect.top + (p.y * cellSize) + (cellSize / 2);
+            spawnParticles(cellCenterX, cellCenterY, tile.color, 8);
+          }
+        });
+
+        spawnFloatingText(boosterCenterX, boosterCenterY - 20, effectText);
+        if (chainCount > 1) {
+          spawnFloatingText(boosterCenterX, boosterCenterY + 30, `CHAIN x${chainCount}!`);
+        }
+      }
+
+      // Check for OTHER boosters in the explosion radius
+      pointsFromThisBooster.forEach(p => {
+        const hitBooster = currentBoosters.find(b => b.x === p.x && b.y === p.y && !explodedBoosterIds.has(b.id));
+        if (hitBooster) {
+          boosterQueue.push(hitBooster);
+        }
+      });
+
+      // Collect points - unlock locked tiles, remove unlocked ones
+      let tilesCleared = 0;
+      pointsFromThisBooster.forEach(p => {
+        const tile = newGrid[p.y]?.[p.x];
+        if (tile) {
+          if (tile.locked) {
+            // Unlock the tile instead of removing it
+            newGrid[p.y][p.x] = { ...tile, locked: false };
+            // Spawn unlock visual
+            if (boardRef.current) {
+              const rect = boardRef.current.getBoundingClientRect();
+              const cellSize = rect.width / GRID_SIZE;
+              const cellCenterX = rect.left + (p.x * cellSize) + (cellSize / 2);
+              const cellCenterY = rect.top + (p.y * cellSize) + (cellSize / 2);
+              spawnFloatingText(cellCenterX, cellCenterY, '🔓');
+            }
+          } else {
+            // Remove unlocked tile
+            if (!allPointsToRemove.some(cp => cp.x === p.x && cp.y === p.y)) {
+              allPointsToRemove.push(p);
+              tilesCleared++;
+            }
+          }
+        }
+      });
+
+      totalScore += Math.round(tilesCleared * 15 * bonusMultiplier);
+
+      // Remove booster from list
+      currentBoosters = currentBoosters.filter(b => b.id !== booster.id);
     }
 
     // Count colors for objectives
     const colorCounts: Record<string, number> = {};
-    pointsToRemove.forEach(p => {
+    allPointsToRemove.forEach(p => {
       const tile = newGrid[p.y][p.x];
       if (tile) {
         colorCounts[tile.color] = (colorCounts[tile.color] || 0) + 1;
@@ -512,45 +619,25 @@ const App: React.FC = () => {
 
     const isLevelComplete = newObjectives.every(obj => obj.current >= obj.target);
 
-    // Calculate score
-    const totalCleared = pointsToRemove.length;
-    const explosionScore = Math.round(totalCleared * 15 * bonusMultiplier);
-
     // Collect IDs for animation
-    const matchingIds = pointsToRemove.map(p => newGrid[p.y][p.x]?.id).filter(Boolean) as string[];
+    const matchingIds = allPointsToRemove.map(p => newGrid[p.y][p.x]?.id).filter(Boolean) as string[];
 
-    // Spawn visuals
+    // Show total score
     if (boardRef.current) {
       const rect = boardRef.current.getBoundingClientRect();
       const cellSize = rect.width / GRID_SIZE;
-
-      const boosterCenterX = rect.left + (booster.x * cellSize) + (cellSize / 2);
-      const boosterCenterY = rect.top + (booster.y * cellSize) + (cellSize / 2);
-
-      // Particles for each exploded block
-      pointsToRemove.forEach(p => {
-        const tile = newGrid[p.y][p.x];
-        if (tile) {
-          const cellCenterX = rect.left + (p.x * cellSize) + (cellSize / 2);
-          const cellCenterY = rect.top + (p.y * cellSize) + (cellSize / 2);
-          spawnParticles(cellCenterX, cellCenterY, tile.color, 8);
-        }
-      });
-
-      spawnFloatingText(boosterCenterX, boosterCenterY - 20, effectText);
-      spawnFloatingText(boosterCenterX, boosterCenterY + 10, `+${explosionScore}`);
+      const avgX = allPointsToRemove.reduce((acc, p) => acc + p.x, 0) / allPointsToRemove.length;
+      const avgY = allPointsToRemove.reduce((acc, p) => acc + p.y, 0) / allPointsToRemove.length;
+      spawnFloatingText(rect.left + avgX * cellSize, rect.top + avgY * cellSize, `+${totalScore}`);
     }
 
     triggerShake();
 
-    // Remove the booster from the list
-    const newBoosters = gameState.boosters.filter(b => b.id !== booster.id);
-
     setGameState(prev => ({
       ...prev,
       grid: newGrid,
-      boosters: newBoosters,
-      score: prev.score + explosionScore,
+      boosters: currentBoosters,
+      score: prev.score + totalScore,
       clearingTiles: matchingIds,
       objectives: newObjectives,
       levelComplete: isLevelComplete
@@ -560,7 +647,7 @@ const App: React.FC = () => {
     setTimeout(() => {
       setGameState(prev => {
         const finalGrid = prev.grid.map(row => [...row]);
-        pointsToRemove.forEach(p => {
+        allPointsToRemove.forEach(p => {
           finalGrid[p.y][p.x] = null;
         });
 
@@ -585,12 +672,96 @@ const App: React.FC = () => {
     }, 400);
   };
 
+  // Execute trash with shake + explode animation
+  const executeTrash = (index: number) => {
+    const piece = gameState.hand[index];
+    if (!piece) return;
+
+    // Start shake animation
+    setTrashingPieceIndex(index);
+
+    // After 1 second, explode and remove
+    setTimeout(() => {
+      // Spawn explosion particles at piece location
+      const pieceEl = pieceRefs.current[index];
+      if (pieceEl) {
+        const rect = pieceEl.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+
+        // Spawn particles for each color in the piece
+        piece.colors.forEach((color, i) => {
+          const offsetX = (Math.random() - 0.5) * rect.width * 0.5;
+          const offsetY = (Math.random() - 0.5) * rect.height * 0.5;
+          spawnParticles(centerX + offsetX, centerY + offsetY, color, 8);
+        });
+      }
+
+      triggerShake();
+      setTrashingPieceIndex(null);
+
+      // Remove piece from hand
+      setGameState(prev => {
+        const newHand = [...prev.hand];
+        newHand[index] = null;
+
+        if (newHand.every(p => p === null)) {
+          return {
+            ...prev,
+            hand: generateValidHand(prev.grid, prev.level),
+            selectedPieceIndex: null
+          };
+        }
+
+        return { ...prev, hand: newHand, selectedPieceIndex: null };
+      });
+    }, 800); // Shake for 800ms then explode
+  };
+
+  // Trash a piece (when dropped on trash)
+  const trashPiece = (index: number) => {
+    if (trashUses > 0) {
+      setTrashUses(prev => prev - 1);
+      executeTrash(index);
+    } else {
+      // Show ad popup - deselect piece first
+      setGameState(prev => ({ ...prev, selectedPieceIndex: null }));
+      setPendingTrashIndex(index);
+      setShowAdPopup(true);
+    }
+  };
+
+  // Handle watching ad
+  const handleWatchAd = () => {
+    setWatchingAd(true);
+    // Simulate watching an ad (in real app, this would show actual ad)
+    setTimeout(() => {
+      if (pendingTrashIndex !== null) {
+        executeTrash(pendingTrashIndex);
+      }
+      setShowAdPopup(false);
+      setPendingTrashIndex(null);
+      setWatchingAd(false);
+    }, 1500); // Simulate 1.5s ad
+  };
+
+  const handleCancelAd = () => {
+    setShowAdPopup(false);
+    setPendingTrashIndex(null);
+  };
+
+  const handlePowerupActivation = () => {
+    const pieceIndex = gameState.selectedPieceIndex;
+    if (pieceIndex === null) return;
+    trashPiece(pieceIndex);
+  };
+
   const startDragging = (e: React.PointerEvent, index: number) => {
-    if (gameState.hand[index] === null || gameState.gameOver || celebrating || showLevelPopup || showAllClear) return;
-    
+    if (gameState.hand[index] === null || gameState.gameOver || celebrating || showLevelPopup || showAllClear || trashingPieceIndex !== null) return;
+
     setGameState(prev => ({ ...prev, selectedPieceIndex: index }));
     setDragPosition({ x: e.clientX, y: e.clientY });
-    
+
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
   };
 
@@ -598,6 +769,22 @@ const App: React.FC = () => {
     if (gameState.selectedPieceIndex === null || gameState.gameOver) return;
 
     setDragPosition({ x: e.clientX, y: e.clientY });
+
+    // Check trash zone
+    let isOverTrash = false;
+    if (trashRef.current) {
+      const rect = trashRef.current.getBoundingClientRect();
+      if (e.clientX >= rect.left && e.clientX <= rect.right &&
+          e.clientY >= rect.top && e.clientY <= rect.bottom) {
+        isOverTrash = true;
+      }
+    }
+    setHoveredPowerup(isOverTrash ? 'trash' : null);
+
+    if (isOverTrash) {
+      setHoveredCell(null);
+      return;
+    }
 
     if (boardRef.current) {
       const rect = boardRef.current.getBoundingClientRect();
@@ -634,14 +821,17 @@ const App: React.FC = () => {
   const stopDragging = (e: React.PointerEvent) => {
     if (gameState.selectedPieceIndex === null) return;
 
-    if (hoveredCell) {
+    if (hoveredPowerup === 'trash') {
+      handlePowerupActivation();
+    } else if (hoveredCell) {
       placePieceAt(hoveredCell.x, hoveredCell.y);
     } else {
       setGameState(prev => ({ ...prev, selectedPieceIndex: null }));
     }
-    
+
     setDragPosition(null);
     setHoveredCell(null);
+    setHoveredPowerup(null);
   };
 
   const placePieceAt = (x: number, y: number) => {
@@ -672,72 +862,81 @@ const App: React.FC = () => {
       if (matchGroups.length > 0) {
         const newCombo = combo + 1;
 
-        // Process matches - create boosters for 4+ matches
+        // Collect ALL cleared points from ALL match groups
         let allClearedPoints: Point[] = [];
-        const boostersToCreate: Booster[] = [];
-
         matchGroups.forEach(group => {
-          const center = findGroupCenter(group);
-          const centerCell = newGrid[center.y][center.x];
+          group.forEach(p => {
+            if (!allClearedPoints.some(cp => cp.x === p.x && cp.y === p.y)) {
+              allClearedPoints.push(p);
+            }
+          });
+        });
 
-          if (group.length >= 6 && centerCell) {
-            // Color ball - eliminates all of one color
+        // Determine booster based on TOTAL blocks cleared (sum of all colors)
+        const boostersToCreate: Booster[] = [];
+        const totalForBooster = allClearedPoints.length;
+
+        if (totalForBooster >= 4) {
+          // Find center of ALL cleared points for booster placement
+          const avgX = allClearedPoints.reduce((acc, p) => acc + p.x, 0) / totalForBooster;
+          const avgY = allClearedPoints.reduce((acc, p) => acc + p.y, 0) / totalForBooster;
+
+          // Find the actual point closest to center
+          let centerPoint = allClearedPoints[0];
+          let minDist = Infinity;
+          allClearedPoints.forEach(p => {
+            const dist = Math.abs(p.x - avgX) + Math.abs(p.y - avgY);
+            if (dist < minDist) {
+              minDist = dist;
+              centerPoint = p;
+            }
+          });
+
+          const centerCell = newGrid[centerPoint.y][centerPoint.x];
+
+          // Count colors to find most common one (for color ball)
+          const colorCounts: Record<string, number> = {};
+          allClearedPoints.forEach(p => {
+            const cell = newGrid[p.y][p.x];
+            if (cell) {
+              colorCounts[cell.color] = (colorCounts[cell.color] || 0) + 1;
+            }
+          });
+          const mostCommonColor = Object.entries(colorCounts).sort((a, b) => b[1] - a[1])[0]?.[0] as Color || centerCell?.color;
+
+          if (totalForBooster >= 6 && centerCell) {
+            // Color ball - eliminates all of the MOST COMMON color
             boostersToCreate.push({
               id: `booster-${Date.now()}-${Math.random()}`,
               type: 'color_ball',
-              x: center.x,
-              y: center.y,
-              color: centerCell.color
+              x: centerPoint.x,
+              y: centerPoint.y,
+              color: mostCommonColor
             });
-            // Clear all except center
-            group.forEach(p => {
-              if (p.x !== center.x || p.y !== center.y) {
-                if (!allClearedPoints.some(cp => cp.x === p.x && cp.y === p.y)) {
-                  allClearedPoints.push(p);
-                }
-              }
-            });
-          } else if (group.length === 5 && centerCell) {
+            // Remove center from cleared points (booster goes there)
+            allClearedPoints = allClearedPoints.filter(p => p.x !== centerPoint.x || p.y !== centerPoint.y);
+          } else if (totalForBooster === 5 && centerCell) {
             // Bomb - eliminates 1 layer around
             boostersToCreate.push({
               id: `booster-${Date.now()}-${Math.random()}`,
               type: 'bomb',
-              x: center.x,
-              y: center.y,
+              x: centerPoint.x,
+              y: centerPoint.y,
               color: centerCell.color
             });
-            group.forEach(p => {
-              if (p.x !== center.x || p.y !== center.y) {
-                if (!allClearedPoints.some(cp => cp.x === p.x && cp.y === p.y)) {
-                  allClearedPoints.push(p);
-                }
-              }
-            });
-          } else if (group.length === 4 && centerCell) {
+            allClearedPoints = allClearedPoints.filter(p => p.x !== centerPoint.x || p.y !== centerPoint.y);
+          } else if (totalForBooster === 4 && centerCell) {
             // Line bomb - eliminates row + column
             boostersToCreate.push({
               id: `booster-${Date.now()}-${Math.random()}`,
               type: 'line_bomb',
-              x: center.x,
-              y: center.y,
+              x: centerPoint.x,
+              y: centerPoint.y,
               color: centerCell.color
             });
-            group.forEach(p => {
-              if (p.x !== center.x || p.y !== center.y) {
-                if (!allClearedPoints.some(cp => cp.x === p.x && cp.y === p.y)) {
-                  allClearedPoints.push(p);
-                }
-              }
-            });
-          } else {
-            // Normal match (3) - clear all
-            group.forEach(p => {
-              if (!allClearedPoints.some(cp => cp.x === p.x && cp.y === p.y)) {
-                allClearedPoints.push(p);
-              }
-            });
+            allClearedPoints = allClearedPoints.filter(p => p.x !== centerPoint.x || p.y !== centerPoint.y);
           }
-        });
+        }
 
         const totalCleared = allClearedPoints.length;
 
@@ -823,9 +1022,70 @@ const App: React.FC = () => {
 
         setTimeout(() => {
           setGameState(prev => {
-            const finalGrid = prev.grid.map(row =>
+            let finalGrid = prev.grid.map(row =>
               row.map(cell => cell && matchingIds.includes(cell.id) ? null : cell)
             );
+
+            // Find locked tiles adjacent to cleared tiles and unlock them
+            const adjacentLockedTiles = getAdjacentToMatches(finalGrid, allClearedPoints);
+            if (adjacentLockedTiles.length > 0) {
+              adjacentLockedTiles.forEach(p => {
+                const tile = finalGrid[p.y][p.x];
+                if (tile && tile.locked) {
+                  finalGrid[p.y][p.x] = { ...tile, locked: false };
+                }
+              });
+
+              // Check for new matches after unlocking (chain reaction)
+              const processChainReactions = (currentGrid: typeof finalGrid): typeof finalGrid => {
+                const newMatchGroups = findMatchGroups(currentGrid);
+                if (newMatchGroups.length === 0) return currentGrid;
+
+                // Collect all points to clear
+                let chainClearedPoints: Point[] = [];
+                newMatchGroups.forEach(group => {
+                  group.forEach(p => {
+                    if (!chainClearedPoints.some(cp => cp.x === p.x && cp.y === p.y)) {
+                      chainClearedPoints.push(p);
+                    }
+                  });
+                });
+
+                // Spawn particles for chain reaction
+                if (boardRef.current) {
+                  const rect = boardRef.current.getBoundingClientRect();
+                  const cellSize = rect.width / GRID_SIZE;
+                  chainClearedPoints.forEach(p => {
+                    const cell = currentGrid[p.y][p.x];
+                    if (cell) {
+                      const cellCenterX = rect.left + (p.x * cellSize) + (cellSize / 2);
+                      const cellCenterY = rect.top + (p.y * cellSize) + (cellSize / 2);
+                      spawnParticles(cellCenterX, cellCenterY, cell.color, 6);
+                    }
+                  });
+                }
+
+                // Clear the matched tiles
+                let updatedGrid = currentGrid.map(row => [...row]);
+                chainClearedPoints.forEach(p => {
+                  updatedGrid[p.y][p.x] = null;
+                });
+
+                // Unlock adjacent locked tiles for this chain
+                const moreLockedTiles = getAdjacentToMatches(updatedGrid, chainClearedPoints);
+                moreLockedTiles.forEach(p => {
+                  const tile = updatedGrid[p.y][p.x];
+                  if (tile && tile.locked) {
+                    updatedGrid[p.y][p.x] = { ...tile, locked: false };
+                  }
+                });
+
+                // Recursively process more chain reactions
+                return processChainReactions(updatedGrid);
+              };
+
+              finalGrid = processChainReactions(finalGrid);
+            }
 
             // Check for ALL CLEAR
             if (isGridEmpty(finalGrid, prev.boosters)) {
@@ -934,6 +1194,26 @@ const App: React.FC = () => {
         @keyframes bomb-glow {
           0%, 100% { filter: brightness(1); }
           50% { filter: brightness(1.3); }
+        }
+        @keyframes adProgress {
+          0% { width: 0%; }
+          100% { width: 100%; }
+        }
+        @keyframes piece-shake {
+          0%, 100% { transform: translate(0, 0) rotate(0deg); }
+          10% { transform: translate(-4px, -2px) rotate(-3deg); }
+          20% { transform: translate(4px, 2px) rotate(3deg); }
+          30% { transform: translate(-4px, 2px) rotate(-2deg); }
+          40% { transform: translate(4px, -2px) rotate(2deg); }
+          50% { transform: translate(-3px, 3px) rotate(-3deg); }
+          60% { transform: translate(3px, -3px) rotate(3deg); }
+          70% { transform: translate(-2px, 2px) rotate(-2deg); }
+          80% { transform: translate(2px, -2px) rotate(2deg); }
+          90% { transform: translate(-1px, 1px) rotate(-1deg); }
+        }
+        .piece-trashing {
+          animation: piece-shake 0.15s ease-in-out infinite;
+          filter: saturate(1.5) brightness(1.2);
         }
       `}</style>
 
@@ -1091,6 +1371,20 @@ const App: React.FC = () => {
                   {cell && !booster && (
                     <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent rounded-lg pointer-events-none" />
                   )}
+                  {/* Locked tile overlay - frozen appearance */}
+                  {cell?.locked && !booster && (
+                    <div className="absolute inset-0 rounded-lg pointer-events-none z-20 flex items-center justify-center bg-slate-900/60">
+                      <div className="w-full h-full flex items-center justify-center">
+                        <svg className="w-4 h-4 text-slate-300/80" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+                        </svg>
+                      </div>
+                      {/* Ice/frost pattern overlay */}
+                      <div className="absolute inset-0 rounded-lg opacity-30" style={{
+                        background: 'repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(148, 163, 184, 0.3) 2px, rgba(148, 163, 184, 0.3) 4px)'
+                      }} />
+                    </div>
+                  )}
                   {booster && (
                     <div
                       className="absolute inset-0 flex items-center justify-center"
@@ -1182,6 +1476,7 @@ const App: React.FC = () => {
         )}
       </div>
 
+
       {/* Drag Preview */}
       {dragPosition && gameState.selectedPieceIndex !== null && (
         <div 
@@ -1196,32 +1491,104 @@ const App: React.FC = () => {
       )}
 
       {/* Piece Selection Rack */}
-      <div className="mt-4 flex flex-col gap-6">
+      <div className="mt-4 flex flex-col gap-4">
         <div className="flex items-center justify-center gap-4">
           <div className="h-[1px] bg-slate-800 flex-1"></div>
           <h3 className="text-slate-500 text-[10px] font-black uppercase tracking-[0.3em]">Next Shapes</h3>
           <div className="h-[1px] bg-slate-800 flex-1"></div>
         </div>
-        
-        <div className="flex justify-around items-center gap-3 h-24 sm:h-32">
+
+        <div className="flex justify-around items-center gap-3 h-28 sm:h-36">
           {gameState.hand.map((piece, index) => (
-            <div 
+            <div
               key={piece?.id || `empty-${index}`}
-              onPointerDown={(e) => startDragging(e, index)}
+              ref={el => pieceRefs.current[index] = el}
               className={`
-                flex-1 h-full bg-slate-900 rounded-3xl flex items-center justify-center p-3
-                border-2 transition-all duration-300 relative touch-none
-                ${gameState.selectedPieceIndex === index 
-                  ? 'border-blue-500/50 bg-blue-500/5 opacity-30' 
-                  : 'border-slate-800 hover:border-slate-700 cursor-grab'}
+                flex-1 h-full bg-slate-900 rounded-3xl flex items-center justify-center
+                border-2 transition-all duration-300 relative
+                ${gameState.selectedPieceIndex === index
+                  ? 'border-blue-500/50 bg-blue-500/5 opacity-30'
+                  : 'border-slate-800'}
                 ${piece === null ? 'opacity-0 scale-90 pointer-events-none' : ''}
+                ${trashingPieceIndex === index ? 'piece-trashing border-red-500' : ''}
               `}
             >
-              {piece && <PiecePreview piece={piece} active={false} />}
+              {/* Piece (draggable area) */}
+              <div
+                onPointerDown={(e) => startDragging(e, index)}
+                className="flex items-center justify-center p-3 touch-none cursor-grab w-full h-full"
+              >
+                {piece && <PiecePreview piece={piece} active={false} />}
+              </div>
             </div>
           ))}
         </div>
+
+        {/* Trash Zone */}
+        <div
+          ref={trashRef}
+          className={`
+            h-14 rounded-2xl flex items-center justify-center gap-2 relative
+            bg-slate-900 border-2 transition-all duration-200
+            ${hoveredPowerup === 'trash'
+              ? 'border-red-500 bg-red-500/20 scale-[1.02]'
+              : 'border-slate-800'}
+            ${gameState.selectedPieceIndex !== null ? 'opacity-100' : 'opacity-30'}
+          `}
+        >
+          <i className={`fa-solid fa-trash text-lg ${trashUses > 0 ? 'text-red-400' : 'text-slate-600'}`}></i>
+          <span className="text-xs text-slate-500 font-bold uppercase">Drop to discard</span>
+          {/* Uses indicator */}
+          <div className={`absolute right-3 px-2 py-0.5 rounded-full text-[10px] font-bold
+            ${trashUses > 0 ? 'bg-red-500/20 text-red-400' : 'bg-slate-800 text-slate-500'}`}>
+            {trashUses > 0 ? `${trashUses} free` : '📺 ad'}
+          </div>
+        </div>
       </div>
+
+      {/* Ad Popup Modal */}
+      {showAdPopup && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100]">
+          <div className="bg-slate-900 rounded-3xl p-6 mx-4 max-w-sm w-full border border-slate-700 shadow-2xl">
+            {watchingAd ? (
+              <div className="text-center py-8">
+                <div className="text-5xl mb-4 animate-pulse">📺</div>
+                <div className="w-full bg-slate-800 rounded-full h-2 mb-4 overflow-hidden">
+                  <div className="bg-gradient-to-r from-green-500 to-emerald-500 h-full rounded-full"
+                    style={{ animation: 'adProgress 1.5s linear forwards' }}></div>
+                </div>
+                <p className="text-slate-400 text-sm font-medium">Playing ad...</p>
+              </div>
+            ) : (
+              <div className="text-center">
+                <div className="text-5xl mb-4">🗑️</div>
+                <h3 className="text-xl font-black text-white mb-2">Discard Piece?</h3>
+                <p className="text-slate-400 text-sm mb-6">
+                  You've used your free discard for this level.
+                  Watch a short ad to use it again!
+                </p>
+
+                <div className="flex flex-col gap-3">
+                  <button
+                    onClick={handleWatchAd}
+                    className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500
+                      text-white font-black py-4 rounded-2xl transition-all active:scale-95 shadow-lg flex items-center justify-center gap-2"
+                  >
+                    <i className="fa-solid fa-play"></i>
+                    Watch Ad
+                  </button>
+                  <button
+                    onClick={handleCancelAd}
+                    className="w-full bg-slate-800 hover:bg-slate-700 text-slate-400 font-bold py-3 rounded-2xl transition-all active:scale-95"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

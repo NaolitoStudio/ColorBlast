@@ -28,6 +28,8 @@ export const initializeObjectives = (level: number): LevelObjective[] => {
 export const createRandomGrid = (fillProbability: number = 0.3, level: number = 1): (TileData | null)[][] => {
   const grid: (TileData | null)[][] = Array(GRID_SIZE).fill(null).map(() => Array(GRID_SIZE).fill(null));
   const levelColors = getColorsForLevel(level);
+  const config = getLevelConfig(level);
+  const lockedTileChance = config.lockedTileChance ?? 0;
 
   for (let y = 0; y < GRID_SIZE; y++) {
     for (let x = 0; x < GRID_SIZE; x++) {
@@ -48,9 +50,11 @@ export const createRandomGrid = (fillProbability: number = 0.3, level: number = 
 
         if (availableColors.length > 0) {
           const color = availableColors[Math.floor(Math.random() * availableColors.length)];
+          const isLocked = lockedTileChance > 0 && Math.random() < lockedTileChance;
           grid[y][x] = {
             color,
-            id: `init-${x}-${y}-${Math.random()}`
+            id: `init-${x}-${y}-${Math.random()}`,
+            ...(isLocked && { locked: true })
           };
         }
       }
@@ -163,6 +167,7 @@ export const canPlacePiece = (
 /**
  * Returns an array of groups, where each group is an array of Points.
  * This allows for combo scoring and staggered animations.
+ * Locked tiles are skipped and do not participate in matches.
  */
 export const findMatchGroups = (grid: (TileData | null)[][]): Point[][] => {
   const allGroups: Point[][] = [];
@@ -178,7 +183,8 @@ export const findMatchGroups = (grid: (TileData | null)[][]): Point[][] => {
   for (let y = 0; y < GRID_SIZE; y++) {
     for (let x = 0; x < GRID_SIZE; x++) {
       const tile = grid[y][x];
-      if (!tile || visited.has(`${x},${y}`)) continue;
+      // Skip locked tiles - they don't participate in matches
+      if (!tile || tile.locked || visited.has(`${x},${y}`)) continue;
 
       const group: Point[] = [];
       const queue: Point[] = [{ x, y }];
@@ -190,11 +196,13 @@ export const findMatchGroups = (grid: (TileData | null)[][]): Point[][] => {
 
         for (const neighbor of getNeighbors(current)) {
           const key = `${neighbor.x},${neighbor.y}`;
+          const neighborTile = grid[neighbor.y]?.[neighbor.x];
           if (
             neighbor.x >= 0 && neighbor.x < GRID_SIZE &&
             neighbor.y >= 0 && neighbor.y < GRID_SIZE &&
             !visited.has(key) &&
-            grid[neighbor.y][neighbor.x]?.color === tile.color
+            neighborTile?.color === tile.color &&
+            !neighborTile?.locked // Skip locked neighbors
           ) {
             visited.add(key);
             queue.push(neighbor);
@@ -209,6 +217,49 @@ export const findMatchGroups = (grid: (TileData | null)[][]): Point[][] => {
   }
 
   return allGroups;
+};
+
+/**
+ * Get all locked tiles that are adjacent (4-directional) to any of the matched points.
+ * Used to unlock tiles when matches occur nearby.
+ */
+export const getAdjacentToMatches = (
+  grid: (TileData | null)[][],
+  matchedPoints: Point[]
+): Point[] => {
+  const lockedAdjacent: Point[] = [];
+  const seen = new Set<string>();
+  const matchedSet = new Set(matchedPoints.map(p => `${p.x},${p.y}`));
+
+  const get4Neighbors = (p: Point) => [
+    { x: p.x + 1, y: p.y },
+    { x: p.x - 1, y: p.y },
+    { x: p.x, y: p.y + 1 },
+    { x: p.x, y: p.y - 1 }
+  ];
+
+  for (const point of matchedPoints) {
+    for (const neighbor of get4Neighbors(point)) {
+      const key = `${neighbor.x},${neighbor.y}`;
+      // Skip if out of bounds, already seen, or is a matched point itself
+      if (
+        neighbor.x < 0 || neighbor.x >= GRID_SIZE ||
+        neighbor.y < 0 || neighbor.y >= GRID_SIZE ||
+        seen.has(key) ||
+        matchedSet.has(key)
+      ) {
+        continue;
+      }
+      seen.add(key);
+
+      const tile = grid[neighbor.y][neighbor.x];
+      if (tile?.locked) {
+        lockedAdjacent.push(neighbor);
+      }
+    }
+  }
+
+  return lockedAdjacent;
 };
 
 /**
@@ -240,6 +291,54 @@ export const findGroupCenter = (group: Point[]): Point => {
   });
 
   return closest;
+};
+
+/**
+ * Rotate a piece shape 90 degrees around its center
+ * @param shape - The piece shape to rotate
+ * @param clockwise - true for clockwise, false for counter-clockwise
+ * @returns Normalized rotated shape
+ */
+export const rotatePieceShape = (shape: Point[], clockwise: boolean): Point[] => {
+  // Calculate the center of the piece
+  const centerX = shape.reduce((sum, p) => sum + p.x, 0) / shape.length;
+  const centerY = shape.reduce((sum, p) => sum + p.y, 0) / shape.length;
+
+  // Rotate around center
+  // Clockwise 90°:        (x, y) -> (y, -x) relative to center
+  // Counter-clockwise 90°: (x, y) -> (-y, x) relative to center
+  const rotated = shape.map(p => {
+    // Translate to origin (center at 0,0)
+    const dx = p.x - centerX;
+    const dy = p.y - centerY;
+
+    // Apply rotation (Y increases downward in screen coordinates)
+    let newDx: number, newDy: number;
+    if (clockwise) {
+      // Clockwise: (dx, dy) -> (-dy, dx)
+      newDx = -dy;
+      newDy = dx;
+    } else {
+      // Counter-clockwise: (dx, dy) -> (dy, -dx)
+      newDx = dy;
+      newDy = -dx;
+    }
+
+    // Translate back and round to integers
+    return {
+      x: Math.round(centerX + newDx),
+      y: Math.round(centerY + newDy)
+    };
+  });
+
+  // Normalize to ensure all coordinates are >= 0
+  const minX = Math.min(...rotated.map(p => p.x));
+  const minY = Math.min(...rotated.map(p => p.y));
+
+  return rotated.map(p => ({
+    x: p.x - minX,
+    y: p.y - minY
+  }));
 };
 
 /**
