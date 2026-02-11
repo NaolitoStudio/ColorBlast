@@ -9,7 +9,7 @@ import { ICONS, UI_ASSETS } from './assets';
 // Just check if the color value looks like an icon path (starts with '/icons/')
 const isIconPath = (color: string) => color.startsWith('/icons/');
 
-const DRAG_OFFSET_Y = 100; // How much the piece is lifted above the finger/cursor
+const DRAG_OFFSET_Y = 25; // How much the piece is lifted above the finger/cursor
 
 // Helper to get particle color from icon path
 const getParticleColor = (iconPath: string): string => {
