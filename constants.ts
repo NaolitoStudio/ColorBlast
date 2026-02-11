@@ -75,6 +75,7 @@ export const COLORS = [
 
 // Level definitions with objectives
 // Level 1: 2 colors, Level 2: 3 colors, Level 3+: 4 colors
+// All targets fixed at 15 per color
 export const LEVELS: LevelConfig[] = [
   {
     level: 1,
@@ -87,8 +88,8 @@ export const LEVELS: LevelConfig[] = [
   {
     level: 2,
     objectives: [
-      { color: Color.RED, target: 20 },
-      { color: Color.BLUE, target: 20 },
+      { color: Color.RED, target: 15 },
+      { color: Color.BLUE, target: 15 },
       { color: Color.GREEN, target: 15 }
     ],
     gridFill: 0.28
@@ -96,9 +97,9 @@ export const LEVELS: LevelConfig[] = [
   {
     level: 3,
     objectives: [
-      { color: Color.RED, target: 25 },
-      { color: Color.BLUE, target: 25 },
-      { color: Color.GREEN, target: 20 },
+      { color: Color.RED, target: 15 },
+      { color: Color.BLUE, target: 15 },
+      { color: Color.GREEN, target: 15 },
       { color: Color.YELLOW, target: 15 }
     ],
     gridFill: 0.30
@@ -106,41 +107,40 @@ export const LEVELS: LevelConfig[] = [
   {
     level: 4,
     objectives: [
-      { color: Color.RED, target: 30 },
-      { color: Color.BLUE, target: 30 },
-      { color: Color.GREEN, target: 25 },
-      { color: Color.YELLOW, target: 20 }
+      { color: Color.RED, target: 15 },
+      { color: Color.BLUE, target: 15 },
+      { color: Color.GREEN, target: 15 },
+      { color: Color.YELLOW, target: 15 }
     ],
     gridFill: 0.32
   },
   {
     level: 5,
     objectives: [
-      { color: Color.RED, target: 35 },
-      { color: Color.BLUE, target: 35 },
-      { color: Color.GREEN, target: 30 },
-      { color: Color.YELLOW, target: 25 }
+      { color: Color.RED, target: 15 },
+      { color: Color.BLUE, target: 15 },
+      { color: Color.GREEN, target: 15 },
+      { color: Color.YELLOW, target: 15 }
     ],
     gridFill: 0.50,
     lockedTileChance: 0.25
   }
 ];
 
-// Get level config - levels beyond 5 scale up with 4 colors
+// Get level config - levels beyond 5 keep same objectives, increase difficulty via grid/locked tiles
 export const getLevelConfig = (level: number): LevelConfig => {
   if (level <= LEVELS.length) {
     return LEVELS[level - 1];
   }
-  // For levels beyond 5, scale up with 4 colors
+  // For levels beyond 5, keep targets at 15, increase grid fill and locked tile chance
   const baseLevel = LEVELS[LEVELS.length - 1];
-  const multiplier = 1 + (level - LEVELS.length) * 0.15;
   return {
     level,
     objectives: baseLevel.objectives.map(obj => ({
       color: obj.color,
-      target: Math.round(obj.target * multiplier)
+      target: 15
     })),
-    gridFill: Math.min(baseLevel.gridFill + (level - LEVELS.length) * 0.02, 0.40),
-    lockedTileChance: baseLevel.lockedTileChance
+    gridFill: Math.min(baseLevel.gridFill + (level - LEVELS.length) * 0.02, 0.55),
+    lockedTileChance: Math.min((baseLevel.lockedTileChance ?? 0) + (level - LEVELS.length) * 0.05, 0.40)
   };
 };

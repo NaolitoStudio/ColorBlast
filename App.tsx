@@ -31,7 +31,7 @@ interface FloatingText {
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(() => {
-    const initialLevel = 5;
+    const initialLevel = 1;
     const levelConfig = getLevelConfig(initialLevel);
     const initialGrid = createRandomGrid(levelConfig.gridFill, initialLevel);
     const initialHand = generateValidHand(initialGrid, initialLevel);
@@ -398,7 +398,7 @@ const App: React.FC = () => {
   };
 
   const handleRestart = () => {
-    const initialLevel = 5;
+    const initialLevel = 1;
     const levelConfig = getLevelConfig(initialLevel);
     const initialGrid = createRandomGrid(levelConfig.gridFill, initialLevel);
     setGameState({
@@ -894,24 +894,27 @@ const App: React.FC = () => {
 
           const centerCell = newGrid[centerPoint.y][centerPoint.x];
 
-          // Count colors to find most common one (for color ball)
-          const colorCounts: Record<string, number> = {};
-          allClearedPoints.forEach(p => {
-            const cell = newGrid[p.y][p.x];
-            if (cell) {
-              colorCounts[cell.color] = (colorCounts[cell.color] || 0) + 1;
-            }
-          });
-          const mostCommonColor = Object.entries(colorCounts).sort((a, b) => b[1] - a[1])[0]?.[0] as Color || centerCell?.color;
-
           if (totalForBooster >= 6 && centerCell) {
-            // Color ball - eliminates all of the MOST COMMON color
+            // Color ball - count ALL colors on the grid to find the most common
+            const gridColorCounts: Record<string, number> = {};
+            const clearedSet = new Set(allClearedPoints.map(p => `${p.x},${p.y}`));
+            for (let gy = 0; gy < GRID_SIZE; gy++) {
+              for (let gx = 0; gx < GRID_SIZE; gx++) {
+                const cell = newGrid[gy][gx];
+                if (cell && !clearedSet.has(`${gx},${gy}`)) {
+                  gridColorCounts[cell.color] = (gridColorCounts[cell.color] || 0) + 1;
+                }
+              }
+            }
+            const mostCommonGridColor = Object.entries(gridColorCounts).sort((a, b) => b[1] - a[1])[0]?.[0] as Color || centerCell.color;
+
+            // Color ball - eliminates all of the MOST COMMON color on grid
             boostersToCreate.push({
               id: `booster-${Date.now()}-${Math.random()}`,
               type: 'color_ball',
               x: centerPoint.x,
               y: centerPoint.y,
-              color: mostCommonColor
+              color: mostCommonGridColor
             });
             // Remove center from cleared points (booster goes there)
             allClearedPoints = allClearedPoints.filter(p => p.x !== centerPoint.x || p.y !== centerPoint.y);
