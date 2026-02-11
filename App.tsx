@@ -1310,20 +1310,6 @@ const App: React.FC = () => {
         ))}
       </div>
 
-      {/* Header */}
-      <div className="flex justify-between items-end mb-4">
-        <div>
-          <h1 className="text-3xl font-black bg-gradient-to-br from-blue-400 via-purple-500 to-pink-500 bg-clip-text text-transparent italic tracking-tighter">
-            COLORBLAST
-          </h1>
-          <div className="text-[10px] text-slate-500 font-bold uppercase tracking-[0.2em]">Strategy & Luck</div>
-        </div>
-        <div className="text-right">
-          <div className="text-[10px] text-slate-500 uppercase font-bold tracking-widest mb-1">Top Score</div>
-          <div className="text-2xl font-black text-yellow-500 leading-none">{gameState.highScore}</div>
-        </div>
-      </div>
-
       {/* Level & Score Card */}
       <div className="bg-slate-900 rounded-3xl p-4 mb-4 shadow-xl border border-slate-800 relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-purple-600 opacity-50"></div>
@@ -1633,8 +1619,8 @@ const App: React.FC = () => {
                   backgroundSize: '100% 100%',
                   backgroundPosition: 'center',
                   backgroundRepeat: 'no-repeat',
-                  width: '99px',
-                  height: '99px'
+                  width: '115px',
+                  height: '115px'
                 }}
               >
                 {/* Piece (draggable area) */}
@@ -1643,7 +1629,7 @@ const App: React.FC = () => {
                   className="flex items-center justify-center p-1 touch-none cursor-grab w-full h-full"
                   style={{ transform: 'scale(0.95)' }}
                 >
-                  {piece && <PiecePreview piece={piece} active={false} />}
+                  {piece && <PiecePreview piece={piece} active={false} containerSize={95} />}
                 </div>
               </div>
             ))}
@@ -1722,7 +1708,7 @@ const App: React.FC = () => {
   );
 };
 
-const PiecePreview: React.FC<{ piece: PieceData, active: boolean, size?: 'small' | 'large', cellSize?: number }> = ({ piece, active, size = 'small', cellSize }) => {
+const PiecePreview: React.FC<{ piece: PieceData, active: boolean, cellSize?: number, containerSize?: number }> = ({ piece, active, cellSize, containerSize }) => {
   const minX = Math.min(...piece.shape.map(p => p.x));
   const maxX = Math.max(...piece.shape.map(p => p.x));
   const minY = Math.min(...piece.shape.map(p => p.y));
@@ -1731,10 +1717,22 @@ const PiecePreview: React.FC<{ piece: PieceData, active: boolean, size?: 'small'
   const width = maxX - minX + 1;
   const height = maxY - minY + 1;
 
-  // Use dynamic cellSize if provided, otherwise fall back to Tailwind classes
-  const useDynamicSize = cellSize !== undefined;
-  const boxSize = useDynamicSize ? '' : (size === 'large' ? 'w-10 h-10' : 'w-3.5 h-3.5 sm:w-5 sm:h-5');
-  const boxStyle = useDynamicSize ? { width: `${cellSize}px`, height: `${cellSize}px` } : {};
+  // Calculate optimal cell size based on piece dimensions and container
+  let finalCellSize: number;
+  const maxCellSize = 28; // Limit max size (between 2x2 and 3x3 feel)
+  if (cellSize !== undefined) {
+    // Explicit cell size (used for drag preview to match board)
+    finalCellSize = cellSize;
+  } else if (containerSize !== undefined) {
+    // Fit piece to container - use the larger dimension to constrain
+    const maxDimension = Math.max(width, height);
+    const gap = 2; // gap-0.5 = 2px
+    const totalGaps = (maxDimension - 1) * gap;
+    finalCellSize = Math.min(maxCellSize, Math.floor((containerSize - totalGaps) / maxDimension));
+  } else {
+    // Default fallback
+    finalCellSize = 20;
+  }
 
   return (
     <div
@@ -1759,9 +1757,10 @@ const PiecePreview: React.FC<{ piece: PieceData, active: boolean, size?: 'small'
         return (
           <div
             key={i}
-            className={`${boxSize} transition-all duration-200 ${inShape ? '' : 'bg-transparent'}`}
+            className="transition-all duration-200"
             style={{
-              ...boxStyle,
+              width: `${finalCellSize}px`,
+              height: `${finalCellSize}px`,
               backgroundColor: hasImage ? 'transparent' : (inShape ? color : 'transparent'),
               backgroundImage: hasImage ? `url(${color})` : 'none',
               backgroundSize: '100% 100%',
