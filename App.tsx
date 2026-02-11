@@ -1774,9 +1774,6 @@ const App: React.FC = () => {
                 className={`
                   flex items-center justify-center
                   transition-all duration-300 relative
-                  ${gameState.selectedPieceIndex === index || returningPiece?.index === index
-                    ? 'opacity-30'
-                    : ''}
                   ${piece === null ? 'opacity-0 scale-90 pointer-events-none' : ''}
                   ${trashingPieceIndex === index ? 'piece-trashing' : ''}
                 `}
@@ -1795,7 +1792,9 @@ const App: React.FC = () => {
                   className="flex items-center justify-center p-1 touch-none cursor-grab w-full h-full"
                   style={{ transform: 'scale(0.95)' }}
                 >
-                  {piece && <PiecePreview piece={piece} active={false} containerSize={95} />}
+                  {piece && gameState.selectedPieceIndex !== index && returningPiece?.index !== index && (
+                    <PiecePreview piece={piece} active={false} containerSize={95} />
+                  )}
                 </div>
               </div>
             ))}
