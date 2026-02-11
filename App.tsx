@@ -9,7 +9,8 @@ import { ICONS, UI_ASSETS } from './assets';
 // Just check if the color value looks like an icon path (starts with '/icons/')
 const isIconPath = (color: string) => color.startsWith('/icons/');
 
-const DRAG_OFFSET_Y = 25; // How much the piece is lifted above the finger/cursor
+// How much the piece is lifted above the finger/cursor (8% of viewport height)
+const getDragOffsetY = () => Math.max(50, window.innerHeight * 0.08);
 
 // Helper to get particle color from icon path
 const getParticleColor = (iconPath: string): string => {
@@ -1411,7 +1412,7 @@ const App: React.FC = () => {
 
       // Calculate the visual center of the dragged piece
       const visualX = e.clientX;
-      const visualY = e.clientY - DRAG_OFFSET_Y;
+      const visualY = e.clientY - getDragOffsetY();
 
       // We want the piece's (0,0) tile to be aligned.
       const minX = Math.min(...piece.shape.map(p => p.x));
@@ -1457,7 +1458,7 @@ const App: React.FC = () => {
         setReturningPiece({
           piece,
           fromX: dragPosition.x,
-          fromY: dragPosition.y - DRAG_OFFSET_Y,
+          fromY: dragPosition.y - getDragOffsetY(),
           toX: targetX,
           toY: targetY,
           index: pieceIndex,
@@ -2402,7 +2403,7 @@ const App: React.FC = () => {
           className="drag-preview"
           style={{
             left: dragPosition.x,
-            top: dragPosition.y - DRAG_OFFSET_Y
+            top: dragPosition.y - getDragOffsetY()
           }}
         >
           <PiecePreview piece={gameState.hand[gameState.selectedPieceIndex]!} active={true} cellSize={dragCellSize} velocity={dragVelocity} />
