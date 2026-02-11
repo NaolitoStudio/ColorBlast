@@ -17,6 +17,7 @@ export type Point = {
 export interface TileData {
   color: Color;
   id: string;
+  special?: 'bomb' | 'paint' | 'rainbow';
 }
 
 export interface PieceData {
@@ -30,6 +31,13 @@ export interface GameState {
   score: number;
   highScore: number;
   hand: (PieceData | null)[];
+  level: number;
+  objectiveColors: Color[];
+  clearedByColor: Partial<Record<Color, number>>;
+  objectiveTarget: number;
+  movesLeft: number;
+  movesTotal: number;
+  levelComplete: boolean;
   gameOver: boolean;
   selectedPieceIndex: number | null;
   clearingTiles: string[]; // IDs of tiles currently animating out

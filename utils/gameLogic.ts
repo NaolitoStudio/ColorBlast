@@ -5,7 +5,10 @@ import { Color, PieceData, Point, TileData } from '../types';
 export const createEmptyGrid = () => 
   Array(GRID_SIZE).fill(null).map(() => Array(GRID_SIZE).fill(null));
 
-export const createRandomGrid = (fillProbability: number = 0.3): (TileData | null)[][] => {
+export const createRandomGrid = (
+  fillProbability: number = 0.3,
+  palette: Color[] = COLORS
+): (TileData | null)[][] => {
   const grid: (TileData | null)[][] = Array(GRID_SIZE).fill(null).map(() => Array(GRID_SIZE).fill(null));
 
   for (let y = 0; y < GRID_SIZE; y++) {
@@ -23,7 +26,7 @@ export const createRandomGrid = (fillProbability: number = 0.3): (TileData | nul
           forbiddenColors.add(grid[y-1][x]!.color);
         }
 
-        const availableColors = COLORS.filter(c => !forbiddenColors.has(c));
+        const availableColors = palette.filter(c => !forbiddenColors.has(c));
         
         if (availableColors.length > 0) {
           const color = availableColors[Math.floor(Math.random() * availableColors.length)];
@@ -38,14 +41,80 @@ export const createRandomGrid = (fillProbability: number = 0.3): (TileData | nul
   return grid;
 };
 
-export const generatePiece = (): PieceData => {
+export const generatePiece = (palette: Color[] = COLORS): PieceData => {
   const shape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
+  const getNeighbors = (index: number): number[] => {
+    const p = shape[index];
+    const neighbors: number[] = [];
+    for (let i = 0; i < shape.length; i++) {
+      if (i === index) continue;
+      const q = shape[i];
+      if (Math.abs(p.x - q.x) + Math.abs(p.y - q.y) === 1) {
+        neighbors.push(i);
+      }
+    }
+    return neighbors;
+  };
+
+  const hasPrebuiltCombo = (colors: Color[]): boolean => {
+    const visited = new Set<number>();
+
+    for (let i = 0; i < shape.length; i++) {
+      if (visited.has(i)) continue;
+
+      const groupColor = colors[i];
+      const queue = [i];
+      visited.add(i);
+      let groupSize = 0;
+
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        groupSize++;
+        const neighbors = getNeighbors(current);
+        for (const n of neighbors) {
+          if (!visited.has(n) && colors[n] === groupColor) {
+            visited.add(n);
+            queue.push(n);
+          }
+        }
+      }
+
+      if (groupSize >= 3) {
+        return true;
+      }
+    }
+
+    return false;
+  };
+
+  const randomColor = () => palette[Math.floor(Math.random() * palette.length)];
+  const randomDifferentColor = (current: Color) => {
+    const alternatives = palette.filter(c => c !== current);
+    return alternatives[Math.floor(Math.random() * alternatives.length)];
+  };
+
+  // If palette has a single color (e.g. Same Color booster), combos are unavoidable by design.
+  if (palette.length === 1) {
+    return {
+      id: Math.random().toString(36).substr(2, 9),
+      shape: [...shape],
+      colors: shape.map(() => palette[0])
+    };
+  }
+
+  let colors = shape.map(() => randomColor());
+  let attempts = 0;
+  while (hasPrebuiltCombo(colors) && attempts < 50) {
+    const randomIndex = Math.floor(Math.random() * shape.length);
+    colors[randomIndex] = randomDifferentColor(colors[randomIndex]);
+    attempts++;
+  }
   
   return {
     id: Math.random().toString(36).substr(2, 9),
     shape: [...shape],
-    // Assign a random color to each tile in the piece
-    colors: shape.map(() => COLORS[Math.floor(Math.random() * COLORS.length)])
+    // Avoid prebuilt 3+ connected same-color groups on the piece itself.
+    colors
   };
 };
 
