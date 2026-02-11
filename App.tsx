@@ -87,7 +87,7 @@ const App: React.FC = () => {
 
   // Powerup uses (reset each level)
   const [trashUses, setTrashUses] = useState(1);
-  const [shuffleUses, setShuffleUses] = useState(2);
+  const [shuffleUses, setShuffleUses] = useState(3);
   const [showAdPopup, setShowAdPopup] = useState(false);
   const [pendingTrashIndex, setPendingTrashIndex] = useState<number | null>(null);
   const [watchingAd, setWatchingAd] = useState(false);
@@ -222,6 +222,82 @@ const App: React.FC = () => {
       }
     }
     return true;
+  };
+
+  // Check if only boosters remain (no regular tiles)
+  const hasOnlyBoostersLeft = (grid: (typeof gameState.grid), boosters: Booster[]): boolean => {
+    if (boosters.length === 0) return false;
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        if (grid[y][x] !== null) return false;
+      }
+    }
+    return true; // No tiles but boosters exist
+  };
+
+  // Handle case when only boosters remain - spawn new tiles if objectives not complete
+  const handleOnlyBoostersLeft = () => {
+    setGameState(prev => {
+      if (prev.levelComplete) return prev;
+
+      // Regenerate tiles around boosters, avoiding booster positions
+      const boosterPositions = new Set(prev.boosters.map(b => `${b.x},${b.y}`));
+      const levelConfig = getLevelConfig(prev.level);
+      const levelColors = getColorsForLevel(prev.level);
+
+      const newGrid: (typeof prev.grid) = prev.grid.map(row => [...row]);
+
+      // Fill empty cells (not occupied by boosters) with new tiles
+      for (let y = 0; y < GRID_SIZE; y++) {
+        for (let x = 0; x < GRID_SIZE; x++) {
+          if (newGrid[y][x] === null && !boosterPositions.has(`${x},${y}`)) {
+            if (Math.random() < levelConfig.gridFill) {
+              newGrid[y][x] = {
+                color: levelColors[Math.floor(Math.random() * levelColors.length)],
+                id: `regen-${Date.now()}-${x}-${y}`
+              };
+            }
+          }
+        }
+      }
+
+      // Ensure we spawned at least some tiles
+      let tileCount = 0;
+      for (let y = 0; y < GRID_SIZE; y++) {
+        for (let x = 0; x < GRID_SIZE; x++) {
+          if (newGrid[y][x] !== null) tileCount++;
+        }
+      }
+
+      // If too few tiles, force spawn more
+      if (tileCount < 10) {
+        const emptyPositions: { x: number; y: number }[] = [];
+        for (let y = 0; y < GRID_SIZE; y++) {
+          for (let x = 0; x < GRID_SIZE; x++) {
+            if (newGrid[y][x] === null && !boosterPositions.has(`${x},${y}`)) {
+              emptyPositions.push({ x, y });
+            }
+          }
+        }
+        // Shuffle and fill first 15 positions
+        emptyPositions.sort(() => Math.random() - 0.5);
+        for (let i = 0; i < Math.min(15, emptyPositions.length); i++) {
+          const pos = emptyPositions[i];
+          newGrid[pos.y][pos.x] = {
+            color: levelColors[Math.floor(Math.random() * levelColors.length)],
+            id: `regen-${Date.now()}-${pos.x}-${pos.y}`
+          };
+        }
+      }
+
+      const newHand = generateValidHand(newGrid, prev.level);
+
+      return {
+        ...prev,
+        grid: newGrid,
+        hand: newHand
+      };
+    });
   };
 
   // Handle ALL CLEAR - regenerate grid if objectives not complete
@@ -485,7 +561,7 @@ const App: React.FC = () => {
     setShowLevelPopup(false);
     setShowAllClear(false);
     setTrashUses(1);
-    setShuffleUses(2);
+    setShuffleUses(3);
   };
 
   const handleNextLevel = () => {
@@ -511,7 +587,7 @@ const App: React.FC = () => {
     setShowLevelPopup(false);
     setShowAllClear(false);
     setTrashUses(1);
-    setShuffleUses(2);
+    setShuffleUses(3);
   };
 
   // Handle clicking on a booster to activate it
@@ -736,6 +812,12 @@ const App: React.FC = () => {
             grid: finalGrid,
             clearingTiles: []
           };
+        }
+
+        // Check if only boosters remain - spawn new tiles if objectives not complete
+        if (hasOnlyBoostersLeft(finalGrid, prev.boosters) && !prev.levelComplete) {
+          setTimeout(() => handleOnlyBoostersLeft(), 100);
+          return { ...prev, grid: finalGrid, clearingTiles: [] };
         }
 
         const lost = !prev.levelComplete && isGameOver(finalGrid, prev.hand);
@@ -1130,6 +1212,12 @@ const App: React.FC = () => {
 
         if (isGridEmpty(finalGrid, prev.boosters)) {
           setTimeout(() => handleAllClear(), 100);
+          return { ...prev, grid: finalGrid, clearingTiles: [] };
+        }
+
+        // Check if only boosters remain
+        if (hasOnlyBoostersLeft(finalGrid, prev.boosters) && !prev.levelComplete) {
+          setTimeout(() => handleOnlyBoostersLeft(), 100);
           return { ...prev, grid: finalGrid, clearingTiles: [] };
         }
 
@@ -1553,6 +1641,12 @@ const App: React.FC = () => {
                 grid: finalGrid,
                 clearingTiles: []
               };
+            }
+
+            // Check if only boosters remain
+            if (hasOnlyBoostersLeft(finalGrid, prev.boosters) && !prev.levelComplete) {
+              setTimeout(() => handleOnlyBoostersLeft(), 100);
+              return { ...prev, grid: finalGrid, clearingTiles: [] };
             }
 
             const lost = !prev.levelComplete && isGameOver(finalGrid, prev.hand);
