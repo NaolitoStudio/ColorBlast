@@ -247,60 +247,144 @@ const App: React.FC = () => {
   const startCelebration = () => {
     setCelebrating(true);
 
-    // Get all remaining blocks with their positions
-    const blocks: { x: number; y: number; color: string; id: string }[] = [];
-    gameState.grid.forEach((row, y) => {
-      row.forEach((cell, x) => {
-        if (cell) {
-          blocks.push({ x, y, color: cell.color, id: cell.id });
-        }
+    const boosters = [...gameState.boosters];
+    const boosterDelay = 400; // ms between booster activations
+
+    // Phase 1: Activate all boosters first
+    if (boosters.length > 0) {
+      boosters.forEach((booster, index) => {
+        setTimeout(() => {
+          // Trigger booster explosion visually
+          celebrationBoosterExplosion(booster);
+
+          // After last booster, start phase 2
+          if (index === boosters.length - 1) {
+            setTimeout(() => {
+              explodeRemainingBlocks();
+            }, 500);
+          }
+        }, index * boosterDelay);
       });
+    } else {
+      // No boosters, go directly to phase 2
+      explodeRemainingBlocks();
+    }
+  };
+
+  // Explode a booster during celebration (simplified version)
+  const celebrationBoosterExplosion = (booster: Booster) => {
+    // Use getBoosterAffectedCells to get the affected points
+    const affectedSet = getBoosterAffectedCells(booster);
+    const affectedPoints: Point[] = Array.from(affectedSet).map(key => {
+      const [x, y] = key.split(',').map(Number);
+      return { x, y };
     });
 
-    // Shuffle blocks for random explosion order
-    const shuffled = blocks.sort(() => Math.random() - 0.5);
+    // Show indicator
+    const previewCells = new Set(affectedPoints.map(p => `${p.x},${p.y}`));
+    const previewColor = booster.type === 'line_bomb' ? 'rgba(59, 130, 246, 0.3)'
+      : booster.type === 'bomb' ? 'rgba(249, 115, 22, 0.3)'
+      : 'rgba(168, 85, 247, 0.3)';
 
-    // Explode each block one by one
-    const delay = 60; // ms between explosions
-    shuffled.forEach((block, index) => {
-      setTimeout(() => {
-        // Spawn particles at block position
-        if (boardRef.current) {
-          const rect = boardRef.current.getBoundingClientRect();
-          const cellSize = rect.width / GRID_SIZE;
-          const cellCenterX = rect.left + (block.x * cellSize) + (cellSize / 2);
-          const cellCenterY = rect.top + (block.y * cellSize) + (cellSize / 2);
-          spawnParticles(cellCenterX, cellCenterY, block.color, 8);
-        }
+    setAffectedCells(previewCells);
+    setAffectedColor(previewColor);
 
-        // Remove this block from grid
-        setGameState(prev => {
-          const newGrid = prev.grid.map(row => [...row]);
-          newGrid[block.y][block.x] = null;
-          return { ...prev, grid: newGrid };
+    // Spawn particles and clear affected cells
+    if (boardRef.current) {
+      const rect = boardRef.current.getBoundingClientRect();
+      const cellSize = rect.width / GRID_SIZE;
+
+      setGameState(prev => {
+        const newGrid = prev.grid.map(row => [...row]);
+        let scoreBonus = 0;
+
+        affectedPoints.forEach(p => {
+          const cell = newGrid[p.y]?.[p.x];
+          if (cell) {
+            const cellCenterX = rect.left + (p.x * cellSize) + (cellSize / 2);
+            const cellCenterY = rect.top + (p.y * cellSize) + (cellSize / 2);
+            spawnParticles(cellCenterX, cellCenterY, cell.color, 6);
+            newGrid[p.y][p.x] = null;
+            scoreBonus += 10;
+          }
         });
 
-        // Add score for each exploded block
-        setGameState(prev => ({ ...prev, score: prev.score + 5 }));
+        // Remove the booster
+        const newBoosters = prev.boosters.filter(b => b.id !== booster.id);
 
-        // Small shake
-        if (index % 3 === 0) triggerShake();
-
-        // Show popup after last block
-        if (index === shuffled.length - 1) {
-          setTimeout(() => {
-            setCelebrating(false);
-            setShowLevelPopup(true);
-          }, 300);
-        }
-      }, index * delay);
-    });
-
-    // If no blocks, show popup immediately
-    if (shuffled.length === 0) {
-      setCelebrating(false);
-      setShowLevelPopup(true);
+        return {
+          ...prev,
+          grid: newGrid,
+          boosters: newBoosters,
+          score: prev.score + scoreBonus
+        };
+      });
     }
+
+    triggerShake();
+
+    // Clear indicator
+    setTimeout(() => {
+      setAffectedCells(new Set());
+      setAffectedColor('transparent');
+    }, 300);
+  };
+
+  // Phase 2: Explode remaining blocks one by one
+  const explodeRemainingBlocks = () => {
+    setGameState(prev => {
+      const blocks: { x: number; y: number; color: string; id: string }[] = [];
+      prev.grid.forEach((row, y) => {
+        row.forEach((cell, x) => {
+          if (cell) {
+            blocks.push({ x, y, color: cell.color, id: cell.id });
+          }
+        });
+      });
+
+      // Shuffle blocks for random explosion order
+      const shuffled = blocks.sort(() => Math.random() - 0.5);
+
+      if (shuffled.length === 0) {
+        // No blocks left, show popup
+        setTimeout(() => {
+          setCelebrating(false);
+          setShowLevelPopup(true);
+        }, 300);
+        return prev;
+      }
+
+      // Explode each block one by one
+      const delay = 60;
+      shuffled.forEach((block, index) => {
+        setTimeout(() => {
+          if (boardRef.current) {
+            const rect = boardRef.current.getBoundingClientRect();
+            const cellSize = rect.width / GRID_SIZE;
+            const cellCenterX = rect.left + (block.x * cellSize) + (cellSize / 2);
+            const cellCenterY = rect.top + (block.y * cellSize) + (cellSize / 2);
+            spawnParticles(cellCenterX, cellCenterY, block.color, 8);
+          }
+
+          setGameState(p => {
+            const newGrid = p.grid.map(row => [...row]);
+            newGrid[block.y][block.x] = null;
+            return { ...p, grid: newGrid, score: p.score + 5 };
+          });
+
+          if (index % 3 === 0) triggerShake();
+
+          if (index === shuffled.length - 1) {
+            setTimeout(() => {
+              setCelebrating(false);
+              setShowLevelPopup(true);
+            }, 300);
+          }
+        }, index * delay);
+      });
+
+      return prev;
+    });
   };
 
   const handleRestart = () => {
