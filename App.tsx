@@ -92,6 +92,15 @@ const App: React.FC = () => {
   const [pendingTrashIndex, setPendingTrashIndex] = useState<number | null>(null);
   const [watchingAd, setWatchingAd] = useState(false);
   const [trashingPieceIndex, setTrashingPieceIndex] = useState<number | null>(null);
+  const [returningPiece, setReturningPiece] = useState<{
+    piece: PieceData;
+    fromX: number;
+    fromY: number;
+    toX: number;
+    toY: number;
+    index: number;
+    progress: number;
+  } | null>(null);
 
   const boardRef = useRef<HTMLDivElement>(null);
   const trashRef = useRef<HTMLDivElement>(null);
@@ -119,6 +128,16 @@ const App: React.FC = () => {
           y: t.y - 1.5, // Float up
           life: t.life - 1
         })).filter(t => t.life > 0);
+      });
+
+      // Update returning piece animation
+      setReturningPiece(prev => {
+        if (!prev) return prev;
+        const newProgress = prev.progress + 0.12; // Fast animation
+        if (newProgress >= 1) {
+          return null; // Animation complete
+        }
+        return { ...prev, progress: newProgress };
       });
 
       animationFrameId = requestAnimationFrame(updateEffects);
@@ -893,19 +912,55 @@ const App: React.FC = () => {
   const stopDragging = (e: React.PointerEvent) => {
     if (gameState.selectedPieceIndex === null) return;
 
+    const pieceIndex = gameState.selectedPieceIndex;
+    const piece = gameState.hand[pieceIndex];
+
     if (hoveredPowerup === 'trash') {
       handlePowerupActivation();
-    } else if (hoveredCell) {
+      setDragPosition(null);
+      setHoveredCell(null);
+      setHoveredPowerup(null);
+      setDragVelocity({ x: 0, y: 0 });
+      lastDragPos.current = null;
+    } else if (hoveredCell && piece && canPlacePiece(gameState.grid, piece, hoveredCell.x, hoveredCell.y)) {
       placePieceAt(hoveredCell.x, hoveredCell.y);
+      setDragPosition(null);
+      setHoveredCell(null);
+      setHoveredPowerup(null);
+      setDragVelocity({ x: 0, y: 0 });
+      lastDragPos.current = null;
+    } else if (piece && dragPosition) {
+      // Invalid drop - animate piece returning to box
+      const pieceBox = pieceRefs.current[pieceIndex];
+      if (pieceBox) {
+        const boxRect = pieceBox.getBoundingClientRect();
+        const targetX = boxRect.left + boxRect.width / 2;
+        const targetY = boxRect.top + boxRect.height / 2;
+
+        setReturningPiece({
+          piece,
+          fromX: dragPosition.x,
+          fromY: dragPosition.y - DRAG_OFFSET_Y,
+          toX: targetX,
+          toY: targetY,
+          index: pieceIndex,
+          progress: 0
+        });
+      }
+      setGameState(prev => ({ ...prev, selectedPieceIndex: null }));
+      setDragPosition(null);
+      setHoveredCell(null);
+      setHoveredPowerup(null);
+      setDragVelocity({ x: 0, y: 0 });
+      lastDragPos.current = null;
     } else {
       setGameState(prev => ({ ...prev, selectedPieceIndex: null }));
+      setDragPosition(null);
+      setHoveredCell(null);
+      setHoveredPowerup(null);
+      setDragVelocity({ x: 0, y: 0 });
+      lastDragPos.current = null;
     }
-
-    setDragPosition(null);
-    setHoveredCell(null);
-    setHoveredPowerup(null);
-    setDragVelocity({ x: 0, y: 0 });
-    lastDragPos.current = null;
   };
 
   const placePieceAt = (x: number, y: number) => {
@@ -1647,16 +1702,56 @@ const App: React.FC = () => {
 
       {/* Drag Preview */}
       {dragPosition && gameState.selectedPieceIndex !== null && (
-        <div 
+        <div
           className="drag-preview"
-          style={{ 
-            left: dragPosition.x, 
-            top: dragPosition.y - DRAG_OFFSET_Y 
+          style={{
+            left: dragPosition.x,
+            top: dragPosition.y - DRAG_OFFSET_Y
           }}
         >
           <PiecePreview piece={gameState.hand[gameState.selectedPieceIndex]!} active={true} cellSize={dragCellSize} velocity={dragVelocity} />
         </div>
       )}
+
+      {/* Returning Piece Animation */}
+      {returningPiece && (() => {
+        // Ease out cubic for smooth deceleration
+        const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
+        const t = easeOut(returningPiece.progress);
+
+        // Interpolate position
+        const currentX = returningPiece.fromX + (returningPiece.toX - returningPiece.fromX) * t;
+        const currentY = returningPiece.fromY + (returningPiece.toY - returningPiece.fromY) * t;
+
+        // Calculate velocity for squash and stretch
+        const dx = returningPiece.toX - returningPiece.fromX;
+        const dy = returningPiece.toY - returningPiece.fromY;
+        const speed = Math.sqrt(dx * dx + dy * dy);
+        const velocityFactor = Math.min(speed / 100, 3) * (1 - t); // Decreases as we approach target
+
+        // Squash and stretch based on direction
+        const angle = Math.atan2(dy, dx);
+        const stretchX = 1 + velocityFactor * 0.15 * Math.abs(Math.cos(angle));
+        const stretchY = 1 + velocityFactor * 0.15 * Math.abs(Math.sin(angle));
+        const squashX = 1 / stretchY;
+        const squashY = 1 / stretchX;
+
+        // Scale down as it approaches the box
+        const scale = 1 - t * 0.5;
+
+        return (
+          <div
+            className="fixed pointer-events-none z-[200]"
+            style={{
+              left: currentX,
+              top: currentY,
+              transform: `translate(-50%, -50%) scaleX(${stretchX * squashX * scale}) scaleY(${stretchY * squashY * scale})`
+            }}
+          >
+            <PiecePreview piece={returningPiece.piece} active={true} cellSize={dragCellSize} />
+          </div>
+        );
+      })()}
 
       {/* Piece Selection Rack */}
       <div className="mt-4">
@@ -1679,7 +1774,7 @@ const App: React.FC = () => {
                 className={`
                   flex items-center justify-center
                   transition-all duration-300 relative
-                  ${gameState.selectedPieceIndex === index
+                  ${gameState.selectedPieceIndex === index || returningPiece?.index === index
                     ? 'opacity-30'
                     : ''}
                   ${piece === null ? 'opacity-0 scale-90 pointer-events-none' : ''}
