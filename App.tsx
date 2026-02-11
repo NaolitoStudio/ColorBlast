@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { GameState, PieceData, Point, Color, LevelObjective, Booster, BoosterType } from './types';
 import { createRandomGrid, generatePiece, generateValidHand, canPlacePiece, findMatchGroups, findGroupCenter, getBombExplosionPoints, isGameOver, calculateScore, initializeObjectives, getAdjacentToMatches } from './utils/gameLogic';
 import { GRID_SIZE, getLevelConfig } from './constants';
-import { ICONS } from './assets';
+import { ICONS, UI_ASSETS } from './assets';
 
 // Since Color enum values are already icon paths, we don't need a separate mapping
 // Just check if the color value looks like an icon path (starts with '/icons/')
@@ -1161,10 +1161,16 @@ const App: React.FC = () => {
   };
 
   return (
-    <div 
-      className="flex flex-col h-screen w-full max-w-md mx-auto p-4 select-none bg-slate-950 overflow-hidden"
+    <div
+      className="flex flex-col h-screen w-full max-w-md mx-auto p-4 select-none overflow-hidden"
       onPointerMove={handlePointerMove}
       onPointerUp={stopDragging}
+      style={{
+        backgroundImage: `url(${UI_ASSETS.BACKGROUND})`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat'
+      }}
     >
       <style>{`
         .board-grid {
@@ -1348,17 +1354,21 @@ const App: React.FC = () => {
       </div>
 
       {/* Game Board Container */}
-      <div 
+      <div
         ref={boardRef}
-        className={`relative aspect-square bg-slate-900 rounded-3xl p-1.5 shadow-2xl border border-slate-800 ${isShaking ? 'shake-animation' : ''}`}
+        className={`relative aspect-square p-4 shadow-2xl ${isShaking ? 'shake-animation' : ''}`}
         style={{
           aspectRatio: '1 / 1',
           width: '100%',
           maxWidth: '100%',
-          flexShrink: 0
+          flexShrink: 0,
+          backgroundImage: `url(${UI_ASSETS.CONTAINER})`,
+          backgroundSize: 'contain',
+          backgroundPosition: 'center',
+          backgroundRepeat: 'no-repeat'
         }}
       >
-        <div className="board-grid w-full h-full gap-1.5">
+        <div className="board-grid w-full h-full gap-0.5">
           {gameState.grid.map((row, y) =>
             row.map((cell, x) => {
               const ghost = isGhostCell(x, y);
@@ -1372,25 +1382,32 @@ const App: React.FC = () => {
               const ghostHasImage = ghostColor && isIconPath(ghostColor);
 
               // Calculate background
-              let bgColor = 'rgba(30, 41, 59, 0.3)'; // empty cell
-              let bgImage = 'none';
+              let bgColor = 'transparent'; // empty cell
+              let bgImage = `url(${UI_ASSETS.SLOT})`; // empty cells show slot
+              let cellOpacity = 0.5; // default for empty slots
 
               if (booster) {
                 bgColor = 'transparent';
+                bgImage = 'none';
+                cellOpacity = 1;
               } else if (cell) {
                 if (cellHasImage) {
                   bgColor = 'transparent';
                   bgImage = `url(${cellColor})`;
                 } else {
                   bgColor = cellColor;
+                  bgImage = 'none';
                 }
+                cellOpacity = 1;
               } else if (ghost) {
                 if (ghostHasImage) {
                   bgColor = 'transparent';
                   bgImage = `url(${ghostColor})`;
                 } else {
                   bgColor = ghostColor;
+                  bgImage = 'none';
                 }
+                cellOpacity = ghost.isValid ? 0.7 : 0.15;
               }
 
               return (
@@ -1398,20 +1415,19 @@ const App: React.FC = () => {
                   key={`${x}-${y}`}
                   onClick={() => booster && activateBooster(booster)}
                   className={`
-                    relative rounded-lg transition-all duration-200
-                    ${cell ? 'shadow-[0_4px_10px_rgba(0,0,0,0.3)]' : 'bg-slate-800/30 border border-white/5'}
+                    relative transition-all duration-200
                     ${booster ? 'cursor-pointer active:scale-95' : ''}
                   `}
                   style={{
                     backgroundColor: bgColor,
                     backgroundImage: bgImage,
-                    backgroundSize: 'cover',
+                    backgroundSize: '100% 100%',
                     backgroundPosition: 'center',
-                    opacity: ghost ? (ghost.isValid ? 0.7 : 0.15) : 1,
+                    backgroundRepeat: 'no-repeat',
+                    opacity: cellOpacity,
                     transform: gameState.clearingTiles.includes(cell?.id || '')
                       ? 'scale(0) rotate(90deg)'
-                      : (ghost && ghost.isValid ? 'scale(0.95)' : 'scale(1)'),
-                    boxShadow: cell && !booster ? `inset 0 2px 4px rgba(255,255,255,0.2), 0 4px 8px rgba(0,0,0,0.4)` : 'none'
+                      : (ghost && ghost.isValid ? 'scale(0.95)' : 'scale(1)')
                   }}
                 >
                   {/* Affected area indicator - shows during booster activation with fade */}
@@ -1546,37 +1562,55 @@ const App: React.FC = () => {
       )}
 
       {/* Piece Selection Rack */}
-      <div className="mt-4 flex flex-col gap-4">
-        <div className="flex items-center justify-center gap-4">
-          <div className="h-[1px] bg-slate-800 flex-1"></div>
-          <h3 className="text-slate-500 text-[10px] font-black uppercase tracking-[0.3em]">Next Shapes</h3>
-          <div className="h-[1px] bg-slate-800 flex-1"></div>
-        </div>
+      <div className="mt-4">
+        <div
+          className="flex flex-col justify-center items-center gap-1 px-6 py-3"
+          style={{
+            backgroundImage: `url(${UI_ASSETS.CONTAINER_NEXT_MAIN})`,
+            backgroundSize: '100% 100%',
+            backgroundPosition: 'center',
+            backgroundRepeat: 'no-repeat',
+            height: '140px'
+          }}
+        >
+          {/* Next Shapes Title */}
+          <h3 className="text-cyan-300 text-xs font-black uppercase tracking-widest mb-0">Next Shapes</h3>
 
-        <div className="flex justify-around items-center gap-3 h-28 sm:h-36">
-          {gameState.hand.map((piece, index) => (
-            <div
-              key={piece?.id || `empty-${index}`}
-              ref={el => pieceRefs.current[index] = el}
-              className={`
-                flex-1 h-full bg-slate-900 rounded-3xl flex items-center justify-center
-                border-2 transition-all duration-300 relative
-                ${gameState.selectedPieceIndex === index
-                  ? 'border-blue-500/50 bg-blue-500/5 opacity-30'
-                  : 'border-slate-800'}
-                ${piece === null ? 'opacity-0 scale-90 pointer-events-none' : ''}
-                ${trashingPieceIndex === index ? 'piece-trashing border-red-500' : ''}
-              `}
-            >
-              {/* Piece (draggable area) */}
+          {/* Pieces Container */}
+          <div className="flex justify-around items-center gap-1 w-full">
+            {gameState.hand.map((piece, index) => (
               <div
-                onPointerDown={(e) => startDragging(e, index)}
-                className="flex items-center justify-center p-3 touch-none cursor-grab w-full h-full"
+                key={piece?.id || `empty-${index}`}
+                ref={el => pieceRefs.current[index] = el}
+                className={`
+                  flex items-center justify-center
+                  transition-all duration-300 relative
+                  ${gameState.selectedPieceIndex === index
+                    ? 'opacity-30'
+                    : ''}
+                  ${piece === null ? 'opacity-0 scale-90 pointer-events-none' : ''}
+                  ${trashingPieceIndex === index ? 'piece-trashing' : ''}
+                `}
+                style={{
+                  backgroundImage: `url(${UI_ASSETS.CONTAINER_NEXT_PIECE})`,
+                  backgroundSize: '100% 100%',
+                  backgroundPosition: 'center',
+                  backgroundRepeat: 'no-repeat',
+                  width: '99px',
+                  height: '99px'
+                }}
               >
-                {piece && <PiecePreview piece={piece} active={false} />}
+                {/* Piece (draggable area) */}
+                <div
+                  onPointerDown={(e) => startDragging(e, index)}
+                  className="flex items-center justify-center p-1 touch-none cursor-grab w-full h-full"
+                  style={{ transform: 'scale(0.95)' }}
+                >
+                  {piece && <PiecePreview piece={piece} active={false} />}
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
 
         {/* Trash Zone */}
@@ -1656,12 +1690,12 @@ const PiecePreview: React.FC<{ piece: PieceData, active: boolean, size?: 'small'
   
   const width = maxX - minX + 1;
   const height = maxY - minY + 1;
-  
-  const boxSize = size === 'large' ? 'w-10 h-10' : 'w-4 h-4 sm:w-6 sm:h-6';
+
+  const boxSize = size === 'large' ? 'w-10 h-10' : 'w-3.5 h-3.5 sm:w-5 sm:h-5';
   
   return (
-    <div 
-      className="piece-preview-grid gap-1"
+    <div
+      className="piece-preview-grid gap-0.5"
       style={{
         gridTemplateColumns: `repeat(${width}, 1fr)`,
         gridTemplateRows: `repeat(${height}, 1fr)`,
@@ -1682,13 +1716,13 @@ const PiecePreview: React.FC<{ piece: PieceData, active: boolean, size?: 'small'
         return (
           <div
             key={i}
-            className={`${boxSize} rounded-lg transition-all duration-200 ${inShape ? 'shadow-md' : 'bg-transparent'}`}
+            className={`${boxSize} transition-all duration-200 ${inShape ? '' : 'bg-transparent'}`}
             style={{
               backgroundColor: hasImage ? 'transparent' : (inShape ? color : 'transparent'),
               backgroundImage: hasImage ? `url(${color})` : 'none',
-              backgroundSize: 'cover',
+              backgroundSize: '100% 100%',
               backgroundPosition: 'center',
-              boxShadow: inShape ? 'inset 0 1px 3px rgba(255,255,255,0.4), 0 2px 4px rgba(0,0,0,0.3)' : 'none'
+              backgroundRepeat: 'no-repeat'
             }}
           />
         );
