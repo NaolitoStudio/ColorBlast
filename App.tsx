@@ -1564,7 +1564,7 @@ const App: React.FC = () => {
       {/* Piece Selection Rack */}
       <div className="mt-4">
         <div
-          className="flex flex-col justify-center items-center gap-1 px-6 py-3"
+          className="flex justify-center items-center px-6"
           style={{
             backgroundImage: `url(${UI_ASSETS.CONTAINER_NEXT_MAIN})`,
             backgroundSize: '100% 100%',
@@ -1573,9 +1573,6 @@ const App: React.FC = () => {
             height: '140px'
           }}
         >
-          {/* Next Shapes Title */}
-          <h3 className="text-cyan-300 text-xs font-black uppercase tracking-widest mb-0">Next Shapes</h3>
-
           {/* Pieces Container */}
           <div className="flex justify-around items-center gap-1 w-full">
             {gameState.hand.map((piece, index) => (
@@ -1617,13 +1614,16 @@ const App: React.FC = () => {
         <div
           ref={trashRef}
           className={`
-            h-14 rounded-2xl flex items-center justify-center gap-2 relative
-            bg-slate-900 border-2 transition-all duration-200
-            ${hoveredPowerup === 'trash'
-              ? 'border-red-500 bg-red-500/20 scale-[1.02]'
-              : 'border-slate-800'}
-            ${gameState.selectedPieceIndex !== null ? 'opacity-100' : 'opacity-30'}
+            h-16 flex items-center justify-center gap-2 relative
+            transition-all duration-200
+            ${hoveredPowerup === 'trash' ? 'scale-[1.02]' : ''}
           `}
+          style={{
+            backgroundImage: `url(${UI_ASSETS.TRASH_BUTTON})`,
+            backgroundSize: '100% 100%',
+            backgroundPosition: 'center',
+            backgroundRepeat: 'no-repeat'
+          }}
         >
           <i className={`fa-solid fa-trash text-lg ${trashUses > 0 ? 'text-red-400' : 'text-slate-600'}`}></i>
           <span className="text-xs text-slate-500 font-bold uppercase">Drop to discard</span>
