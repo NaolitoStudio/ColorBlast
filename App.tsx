@@ -59,7 +59,10 @@ const App: React.FC = () => {
     const initialHand = generateValidHand(initialGrid, initialLevel);
     return {
       grid: initialGrid,
-      boosters: [],
+      boosters: [
+        { id: 'test-superball-1', type: 'color_ball', x: 2, y: 2, color: Color.BLUE },
+        { id: 'test-superball-2', type: 'color_ball', x: 5, y: 5, color: Color.ORANGE }
+      ],
       score: 0,
       highScore: Number(localStorage.getItem('highScore')) || 0,
       moves: 20,
@@ -866,7 +869,7 @@ const App: React.FC = () => {
     // Remove tiles after animation
     setTimeout(() => {
       setGameState(prev => {
-        const finalGrid = prev.grid.map(row => [...row]);
+        let finalGrid = prev.grid.map(row => [...row]);
         allPointsToRemove.forEach(p => {
           finalGrid[p.y][p.x] = null;
         });
@@ -885,6 +888,21 @@ const App: React.FC = () => {
         if (hasOnlyBoostersLeft(finalGrid, prev.boosters) && !prev.levelComplete) {
           setTimeout(() => handleOnlyBoostersLeft(), 100);
           return { ...prev, grid: finalGrid, clearingTiles: [] };
+        }
+
+        // Add random blocks to maintain initial grid coverage
+        const levelConfig = getLevelConfig(prev.level);
+        const totalCells = GRID_SIZE * GRID_SIZE;
+        const targetTiles = Math.floor(totalCells * levelConfig.gridFill);
+        const currentTiles = finalGrid.flat().filter(cell => cell !== null).length;
+        const blocksToAdd = Math.max(3, targetTiles - currentTiles);
+        const boosterPositions = prev.boosters.map(b => ({ x: b.x, y: b.y }));
+        const result = addRandomBlocks(finalGrid, blocksToAdd, prev.level, boosterPositions);
+        finalGrid = result.grid;
+
+        // Trigger flying animation for new blocks
+        if (result.addedBlocks.length > 0) {
+          setTimeout(() => triggerIncomingBlockAnimation(result.addedBlocks), 0);
         }
 
         const lost = !prev.levelComplete && isGameOver(finalGrid, prev.hand);
@@ -1088,8 +1106,8 @@ const App: React.FC = () => {
       // Ease out cubic for smooth landing
       const easedProgress = 1 - Math.pow(1 - progress, 3);
 
-      // Show grid cells well before animation ends to avoid flicker (~10 frames early)
-      if (progress > 0.75 && flyingTileIds.current.size > 0) {
+      // Show grid cells when animation is nearly complete (easedProgress > 0.98 means visually at destination)
+      if (easedProgress > 0.98 && flyingTileIds.current.size > 0) {
         flyingTileIds.current.clear();
       }
 
@@ -1616,19 +1634,8 @@ const App: React.FC = () => {
       let newHand = [...hand];
       newHand[selectedPieceIndex!] = null;
 
-      // When all pieces are used, add blocks to grid and generate new hand
+      // When all pieces are used, generate new hand
       if (newHand.every(p => p === null)) {
-        // Add 4-6 random blocks to the grid (pass booster positions to avoid)
-        const blocksToAdd = 4 + Math.floor(Math.random() * 3);
-        const boosterPositions = boosters.map(b => ({ x: b.x, y: b.y }));
-        const result = addRandomBlocks(newGrid, blocksToAdd, level, boosterPositions);
-        newGrid = result.grid;
-
-        // Trigger flying animation for new blocks
-        if (result.addedBlocks.length > 0 && boardRef.current) {
-          triggerIncomingBlockAnimation(result.addedBlocks);
-        }
-
         const validHand = generateValidHand(newGrid, level);
         newHand = validHand;
         // Trigger fade-in for new pieces
@@ -1914,6 +1921,21 @@ const App: React.FC = () => {
             if (hasOnlyBoostersLeft(finalGrid, prev.boosters) && !prev.levelComplete) {
               setTimeout(() => handleOnlyBoostersLeft(), 100);
               return { ...prev, grid: finalGrid, clearingTiles: [] };
+            }
+
+            // Add random blocks to maintain initial grid coverage
+            const levelConfig = getLevelConfig(prev.level);
+            const totalCells = GRID_SIZE * GRID_SIZE;
+            const targetTiles = Math.floor(totalCells * levelConfig.gridFill);
+            const currentTiles = finalGrid.flat().filter(cell => cell !== null).length;
+            const blocksToAdd = Math.max(3, targetTiles - currentTiles);
+            const boosterPositions = prev.boosters.map(b => ({ x: b.x, y: b.y }));
+            const result = addRandomBlocks(finalGrid, blocksToAdd, prev.level, boosterPositions);
+            finalGrid = result.grid;
+
+            // Trigger flying animation for new blocks (after state update)
+            if (result.addedBlocks.length > 0) {
+              setTimeout(() => triggerIncomingBlockAnimation(result.addedBlocks), 0);
             }
 
             const lost = !prev.levelComplete && isGameOver(finalGrid, prev.hand);
