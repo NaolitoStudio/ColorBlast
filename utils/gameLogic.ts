@@ -1,12 +1,33 @@
 
-import { GRID_SIZE, SHAPES, COLORS } from '../constants';
-import { Color, PieceData, Point, TileData } from '../types';
+import { GRID_SIZE, SHAPES, getLevelConfig } from '../constants';
+import { Color, PieceData, Point, TileData, LevelObjective } from '../types';
 
-export const createEmptyGrid = () => 
+export const createEmptyGrid = () =>
   Array(GRID_SIZE).fill(null).map(() => Array(GRID_SIZE).fill(null));
 
-export const createRandomGrid = (fillProbability: number = 0.3): (TileData | null)[][] => {
+/**
+ * Get available colors based on current level's objectives
+ */
+export const getColorsForLevel = (level: number): Color[] => {
+  const config = getLevelConfig(level);
+  return config.objectives.map(obj => obj.color);
+};
+
+/**
+ * Initialize objectives for a level
+ */
+export const initializeObjectives = (level: number): LevelObjective[] => {
+  const config = getLevelConfig(level);
+  return config.objectives.map(obj => ({
+    color: obj.color,
+    target: obj.target,
+    current: 0
+  }));
+};
+
+export const createRandomGrid = (fillProbability: number = 0.3, level: number = 1): (TileData | null)[][] => {
   const grid: (TileData | null)[][] = Array(GRID_SIZE).fill(null).map(() => Array(GRID_SIZE).fill(null));
+  const levelColors = getColorsForLevel(level);
 
   for (let y = 0; y < GRID_SIZE; y++) {
     for (let x = 0; x < GRID_SIZE; x++) {
@@ -23,8 +44,8 @@ export const createRandomGrid = (fillProbability: number = 0.3): (TileData | nul
           forbiddenColors.add(grid[y-1][x]!.color);
         }
 
-        const availableColors = COLORS.filter(c => !forbiddenColors.has(c));
-        
+        const availableColors = levelColors.filter(c => !forbiddenColors.has(c));
+
         if (availableColors.length > 0) {
           const color = availableColors[Math.floor(Math.random() * availableColors.length)];
           grid[y][x] = {
@@ -38,15 +59,84 @@ export const createRandomGrid = (fillProbability: number = 0.3): (TileData | nul
   return grid;
 };
 
-export const generatePiece = (): PieceData => {
-  const shape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
-  
-  return {
+/**
+ * Check if a piece can be placed anywhere on the grid
+ */
+export const canPieceFitAnywhere = (grid: (TileData | null)[][], piece: PieceData): boolean => {
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      if (canPlacePiece(grid, piece, x, y)) {
+        return true;
+      }
+    }
+  }
+  return false;
+};
+
+/**
+ * Generate a piece that can definitely be placed on the grid
+ * Tries random pieces first, then systematically finds one that fits
+ */
+export const generatePiece = (grid?: (TileData | null)[][], level: number = 1): PieceData => {
+  const levelColors = getColorsForLevel(level);
+
+  const createPieceFromShape = (shape: Point[]): PieceData => ({
     id: Math.random().toString(36).substr(2, 9),
     shape: [...shape],
-    // Assign a random color to each tile in the piece
-    colors: shape.map(() => COLORS[Math.floor(Math.random() * COLORS.length)])
-  };
+    colors: shape.map(() => levelColors[Math.floor(Math.random() * levelColors.length)])
+  });
+
+  // If no grid provided, just return random piece (for initial load)
+  if (!grid) {
+    const shape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
+    return createPieceFromShape(shape);
+  }
+
+  // Shuffle shapes for randomness
+  const shuffledShapes = [...SHAPES].sort(() => Math.random() - 0.5);
+
+  // Try each shape until we find one that fits
+  for (const shape of shuffledShapes) {
+    const piece = createPieceFromShape(shape);
+    if (canPieceFitAnywhere(grid, piece)) {
+      return piece;
+    }
+  }
+
+  // Fallback: return single dot (always fits if there's any empty space)
+  return createPieceFromShape(SHAPES[0]);
+};
+
+/**
+ * Generate a hand of 3 pieces that can all be placed on the grid
+ */
+export const generateValidHand = (grid: (TileData | null)[][], level: number = 1): PieceData[] => {
+  const hand: PieceData[] = [];
+  let workingGrid = grid.map(row => [...row]);
+
+  for (let i = 0; i < 3; i++) {
+    const piece = generatePiece(workingGrid, level);
+    hand.push(piece);
+
+    // Simulate placing this piece to ensure next pieces also have room
+    // Find first valid position and "reserve" it
+    outer: for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        if (canPlacePiece(workingGrid, piece, x, y)) {
+          // Mark these cells as occupied for next piece generation
+          for (const point of piece.shape) {
+            workingGrid[y + point.y][x + point.x] = {
+              color: piece.colors[0],
+              id: `temp-${i}-${x}-${y}`
+            };
+          }
+          break outer;
+        }
+      }
+    }
+  }
+
+  return hand;
 };
 
 export const canPlacePiece = (

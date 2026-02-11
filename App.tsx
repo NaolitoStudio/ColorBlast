@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { GameState, PieceData, Point } from './types';
-import { createRandomGrid, generatePiece, canPlacePiece, findMatchGroups, isGameOver, calculateScore } from './utils/gameLogic';
-import { GRID_SIZE } from './constants';
+import { GameState, PieceData, Point, Color, LevelObjective } from './types';
+import { createRandomGrid, generatePiece, generateValidHand, canPlacePiece, findMatchGroups, isGameOver, calculateScore, initializeObjectives } from './utils/gameLogic';
+import { GRID_SIZE, getLevelConfig } from './constants';
 
 const DRAG_OFFSET_Y = 100; // How much the piece is lifted above the finger/cursor
 
@@ -31,16 +31,22 @@ interface FloatingText {
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(() => {
-    const initialHand = [generatePiece(), generatePiece(), generatePiece()];
+    const initialLevel = 1;
+    const levelConfig = getLevelConfig(initialLevel);
+    const initialGrid = createRandomGrid(levelConfig.gridFill, initialLevel);
+    const initialHand = generateValidHand(initialGrid, initialLevel);
     return {
-      grid: createRandomGrid(0.3), // 30% filled with random blocks
+      grid: initialGrid,
       score: 0,
       highScore: Number(localStorage.getItem('highScore')) || 0,
       hand: initialHand,
       gameOver: false,
       selectedPieceIndex: null,
       clearingTiles: [],
-      combo: 1
+      combo: 1,
+      level: initialLevel,
+      objectives: initializeObjectives(initialLevel),
+      levelComplete: false
     };
   });
 
@@ -51,6 +57,8 @@ const App: React.FC = () => {
   const [particles, setParticles] = useState<Particle[]>([]);
   const [floatingTexts, setFloatingTexts] = useState<FloatingText[]>([]);
   const [isShaking, setIsShaking] = useState(false);
+  const [celebrating, setCelebrating] = useState(false);
+  const [showLevelPopup, setShowLevelPopup] = useState(false);
 
   const boardRef = useRef<HTMLDivElement>(null);
 
@@ -92,6 +100,14 @@ const App: React.FC = () => {
     }
   }, [gameState.score, gameState.highScore]);
 
+  // Start celebration when level is complete
+  useEffect(() => {
+    if (gameState.levelComplete && !celebrating && !showLevelPopup) {
+      // Small delay before starting celebration
+      setTimeout(() => startCelebration(), 500);
+    }
+  }, [gameState.levelComplete]);
+
   const triggerShake = () => {
     setIsShaking(true);
     setTimeout(() => setIsShaking(false), 300);
@@ -130,23 +146,113 @@ const App: React.FC = () => {
     }]);
   };
 
+  // Chain explosion celebration when level is complete
+  const startCelebration = () => {
+    setCelebrating(true);
+
+    // Get all remaining blocks with their positions
+    const blocks: { x: number; y: number; color: string; id: string }[] = [];
+    gameState.grid.forEach((row, y) => {
+      row.forEach((cell, x) => {
+        if (cell) {
+          blocks.push({ x, y, color: cell.color, id: cell.id });
+        }
+      });
+    });
+
+    // Shuffle blocks for random explosion order
+    const shuffled = blocks.sort(() => Math.random() - 0.5);
+
+    // Explode each block one by one
+    const delay = 60; // ms between explosions
+    shuffled.forEach((block, index) => {
+      setTimeout(() => {
+        // Spawn particles at block position
+        if (boardRef.current) {
+          const rect = boardRef.current.getBoundingClientRect();
+          const cellSize = rect.width / GRID_SIZE;
+          const cellCenterX = rect.left + (block.x * cellSize) + (cellSize / 2);
+          const cellCenterY = rect.top + (block.y * cellSize) + (cellSize / 2);
+          spawnParticles(cellCenterX, cellCenterY, block.color, 8);
+        }
+
+        // Remove this block from grid
+        setGameState(prev => {
+          const newGrid = prev.grid.map(row => [...row]);
+          newGrid[block.y][block.x] = null;
+          return { ...prev, grid: newGrid };
+        });
+
+        // Add score for each exploded block
+        setGameState(prev => ({ ...prev, score: prev.score + 5 }));
+
+        // Small shake
+        if (index % 3 === 0) triggerShake();
+
+        // Show popup after last block
+        if (index === shuffled.length - 1) {
+          setTimeout(() => {
+            setCelebrating(false);
+            setShowLevelPopup(true);
+          }, 300);
+        }
+      }, index * delay);
+    });
+
+    // If no blocks, show popup immediately
+    if (shuffled.length === 0) {
+      setCelebrating(false);
+      setShowLevelPopup(true);
+    }
+  };
+
   const handleRestart = () => {
+    const initialLevel = 1;
+    const levelConfig = getLevelConfig(initialLevel);
+    const initialGrid = createRandomGrid(levelConfig.gridFill, initialLevel);
     setGameState({
-      grid: createRandomGrid(0.3),
+      grid: initialGrid,
       score: 0,
       highScore: Number(localStorage.getItem('highScore')) || 0,
-      hand: [generatePiece(), generatePiece(), generatePiece()],
+      hand: generateValidHand(initialGrid, initialLevel),
       gameOver: false,
       selectedPieceIndex: null,
       clearingTiles: [],
-      combo: 1
+      combo: 1,
+      level: initialLevel,
+      objectives: initializeObjectives(initialLevel),
+      levelComplete: false
     });
     setParticles([]);
     setFloatingTexts([]);
+    setCelebrating(false);
+    setShowLevelPopup(false);
+  };
+
+  const handleNextLevel = () => {
+    const nextLevel = gameState.level + 1;
+    const levelConfig = getLevelConfig(nextLevel);
+    const newGrid = createRandomGrid(levelConfig.gridFill, nextLevel);
+    setGameState(prev => ({
+      ...prev,
+      grid: newGrid,
+      hand: generateValidHand(newGrid, nextLevel),
+      gameOver: false,
+      selectedPieceIndex: null,
+      clearingTiles: [],
+      combo: 1,
+      level: nextLevel,
+      objectives: initializeObjectives(nextLevel),
+      levelComplete: false
+    }));
+    setParticles([]);
+    setFloatingTexts([]);
+    setCelebrating(false);
+    setShowLevelPopup(false);
   };
 
   const startDragging = (e: React.PointerEvent, index: number) => {
-    if (gameState.hand[index] === null || gameState.gameOver) return;
+    if (gameState.hand[index] === null || gameState.gameOver || celebrating || showLevelPopup) return;
     
     setGameState(prev => ({ ...prev, selectedPieceIndex: index }));
     setDragPosition({ x: e.clientX, y: e.clientY });
@@ -205,9 +311,9 @@ const App: React.FC = () => {
   };
 
   const placePieceAt = (x: number, y: number) => {
-    const { selectedPieceIndex, hand, grid, score, combo } = gameState;
+    const { selectedPieceIndex, hand, grid, score, combo, level, objectives } = gameState;
     const piece = hand[selectedPieceIndex!];
-    
+
     if (piece && canPlacePiece(grid, piece, x, y)) {
       const newGrid = grid.map(row => [...row]);
       piece.shape.forEach((point, i) => {
@@ -217,33 +323,49 @@ const App: React.FC = () => {
         };
       });
 
-      const newHand = [...hand];
+      let newHand = [...hand];
       newHand[selectedPieceIndex!] = null;
 
+      // When all pieces are used, generate new hand (same level)
       if (newHand.every(p => p === null)) {
-        newHand[0] = generatePiece();
-        newHand[1] = generatePiece();
-        newHand[2] = generatePiece();
+        const validHand = generateValidHand(newGrid, level);
+        newHand = validHand;
       }
 
       const matchGroups = findMatchGroups(newGrid);
-      
+
       // Calculate Score & Effects
       if (matchGroups.length > 0) {
         const allClearedPoints = matchGroups.flat();
         const totalCleared = allClearedPoints.length;
         const newCombo = combo + 1;
-        
+
+        // Count cleared blocks by color for objectives
+        const colorCounts: Record<string, number> = {};
+        allClearedPoints.forEach(p => {
+          const color = newGrid[p.y][p.x]!.color;
+          colorCounts[color] = (colorCounts[color] || 0) + 1;
+        });
+
+        // Update objectives
+        const newObjectives = objectives.map(obj => ({
+          ...obj,
+          current: Math.min(obj.target, obj.current + (colorCounts[obj.color] || 0))
+        }));
+
+        // Check if level complete
+        const isLevelComplete = newObjectives.every(obj => obj.current >= obj.target);
+
         // Use updated scoring logic
         const { score: moveScore, text, multiplier } = calculateScore(totalCleared, newCombo);
         const newScore = score + moveScore;
         const matchingIds = allClearedPoints.map(p => newGrid[p.y][p.x]!.id);
-        
+
         // Spawn Visuals
         if (boardRef.current) {
           const rect = boardRef.current.getBoundingClientRect();
           const cellSize = rect.width / GRID_SIZE;
-          
+
           // Particles for each block
           allClearedPoints.forEach(p => {
             const cellCenterX = rect.left + (p.x * cellSize) + (cellSize / 2);
@@ -261,25 +383,27 @@ const App: React.FC = () => {
             spawnFloatingText(screenX, screenY, `${text} x${multiplier}`);
           }
         }
-        
+
         triggerShake();
 
-        setGameState(prev => ({ 
-          ...prev, 
-          grid: newGrid, 
-          score: newScore, 
-          hand: newHand, 
+        setGameState(prev => ({
+          ...prev,
+          grid: newGrid,
+          score: newScore,
+          hand: newHand,
           selectedPieceIndex: null,
           clearingTiles: matchingIds,
-          combo: newCombo
+          combo: newCombo,
+          objectives: newObjectives,
+          levelComplete: isLevelComplete
         }));
 
         setTimeout(() => {
           setGameState(prev => {
-            const finalGrid = prev.grid.map(row => 
+            const finalGrid = prev.grid.map(row =>
               row.map(cell => cell && matchingIds.includes(cell.id) ? null : cell)
             );
-            const lost = isGameOver(finalGrid, prev.hand);
+            const lost = !prev.levelComplete && isGameOver(finalGrid, prev.hand);
             return {
               ...prev,
               grid: finalGrid,
@@ -294,7 +418,7 @@ const App: React.FC = () => {
         const lost = isGameOver(newGrid, newHand);
         // Base score for placing pieces is piece size * 10
         const placementScore = piece.shape.length * 10;
-        
+
         setGameState(prev => ({
           ...prev,
           grid: newGrid,
@@ -302,7 +426,7 @@ const App: React.FC = () => {
           hand: newHand,
           selectedPieceIndex: null,
           gameOver: lost,
-          combo: 1 
+          combo: 1
         }));
       }
     } else {
@@ -413,25 +537,66 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Score Card */}
-      <div className="bg-slate-900 rounded-3xl p-5 mb-6 flex justify-between items-center shadow-xl border border-slate-800 relative overflow-hidden">
+      {/* Level & Score Card */}
+      <div className="bg-slate-900 rounded-3xl p-4 mb-4 shadow-xl border border-slate-800 relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-purple-600 opacity-50"></div>
-        <div className="flex flex-col">
-          <span className="text-slate-500 text-[10px] uppercase font-bold tracking-widest mb-1">Score</span>
-          <span className="text-5xl font-black text-white tracking-tight">{gameState.score}</span>
+
+        {/* Top row: Level, Score, Combo, Restart */}
+        <div className="flex justify-between items-center mb-3">
+          <div className="flex items-center gap-3">
+            <div className={`text-xl font-black px-3 py-1 rounded-xl ${gameState.level <= 1 ? 'bg-blue-500/20 text-blue-400' : gameState.level === 2 ? 'bg-green-500/20 text-green-400' : 'bg-purple-500/20 text-purple-400'}`}>
+              Level {gameState.level}
+            </div>
+            <div className="flex flex-col">
+              <span className="text-2xl font-black text-white">{gameState.score}</span>
+              <span className="text-[8px] text-slate-500 uppercase font-bold">Score</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex flex-col items-end">
+              <div className={`text-lg font-black transition-all ${gameState.combo > 1 ? 'text-yellow-400' : 'text-slate-700'}`}>
+                x{gameState.combo}
+              </div>
+              <span className="text-[8px] uppercase font-bold text-slate-600">Combo</span>
+            </div>
+            <button
+              onClick={handleRestart}
+              className="bg-slate-800 hover:bg-slate-700 w-10 h-10 rounded-xl flex items-center justify-center transition-all active:scale-90 border border-slate-700"
+            >
+              <i className="fa-solid fa-rotate-right text-lg text-blue-400"></i>
+            </button>
+          </div>
         </div>
-        <div className="flex flex-col items-end">
-           <div className={`text-xl font-black transition-all ${gameState.combo > 1 ? 'text-yellow-400 scale-110' : 'text-slate-700'}`}>
-             x{gameState.combo}
-           </div>
-           <span className="text-[8px] uppercase font-bold text-slate-600 tracking-wider">Combo</span>
+
+        {/* Objectives */}
+        <div className="flex gap-2 justify-center">
+          {gameState.objectives.map((obj, i) => {
+            const progress = Math.min(100, (obj.current / obj.target) * 100);
+            const isComplete = obj.current >= obj.target;
+            return (
+              <div key={i} className="flex-1 max-w-[100px]">
+                <div className="flex items-center justify-between mb-1">
+                  <div
+                    className="w-4 h-4 rounded-md shadow-inner"
+                    style={{ backgroundColor: obj.color }}
+                  />
+                  <span className={`text-xs font-bold ${isComplete ? 'text-green-400' : 'text-white'}`}>
+                    {obj.current}/{obj.target}
+                  </span>
+                </div>
+                <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-all duration-300 rounded-full ${isComplete ? 'bg-green-500' : ''}`}
+                    style={{
+                      width: `${progress}%`,
+                      backgroundColor: isComplete ? undefined : obj.color
+                    }}
+                  />
+                </div>
+              </div>
+            );
+          })}
         </div>
-        <button 
-          onClick={handleRestart}
-          className="ml-4 bg-slate-800 hover:bg-slate-700 w-12 h-12 rounded-2xl flex items-center justify-center transition-all active:scale-90 border border-slate-700 shadow-lg"
-        >
-          <i className="fa-solid fa-rotate-right text-xl text-blue-400"></i>
-        </button>
       </div>
 
       {/* Game Board Container */}
@@ -473,8 +638,29 @@ const App: React.FC = () => {
           )}
         </div>
 
+        {/* Level Complete Screen */}
+        {showLevelPopup && (
+          <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-md rounded-3xl flex flex-col items-center justify-center p-8 text-center z-50">
+            <div className="text-6xl mb-4">🎉</div>
+            <h2 className="text-3xl font-black mb-1 bg-gradient-to-r from-green-400 to-emerald-500 bg-clip-text text-transparent">
+              LEVEL {gameState.level} COMPLETE!
+            </h2>
+            <p className="text-slate-400 text-sm mb-6 font-medium">All objectives cleared!</p>
+            <div className="bg-slate-900 rounded-2xl p-4 w-full mb-6 border border-slate-800">
+              <span className="text-slate-500 text-[10px] uppercase font-bold tracking-widest block mb-2">Score</span>
+              <span className="text-4xl font-black text-white">{gameState.score}</span>
+            </div>
+            <button
+              onClick={handleNextLevel}
+              className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-black py-4 px-12 rounded-2xl transition-all active:scale-95 shadow-lg"
+            >
+              NEXT LEVEL →
+            </button>
+          </div>
+        )}
+
         {/* Game Over Screen */}
-        {gameState.gameOver && (
+        {gameState.gameOver && !gameState.levelComplete && (
           <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-md rounded-3xl flex flex-col items-center justify-center p-8 text-center z-50">
             <h2 className="text-4xl font-black mb-1 text-white">GAME OVER</h2>
             <p className="text-slate-400 text-sm mb-8 font-medium">No valid moves left!</p>
@@ -482,7 +668,7 @@ const App: React.FC = () => {
               <span className="text-slate-500 text-[10px] uppercase font-bold tracking-widest block mb-2">Final Score</span>
               <span className="text-5xl font-black text-white">{gameState.score}</span>
             </div>
-            <button 
+            <button
               onClick={handleRestart}
               className="bg-blue-600 hover:bg-blue-500 text-white font-black py-4 px-12 rounded-2xl transition-all active:scale-95"
             >
