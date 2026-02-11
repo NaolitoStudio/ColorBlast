@@ -244,7 +244,17 @@ const App: React.FC = () => {
     const affected = new Set<string>();
     const grid = gameState.grid;
 
-    if (booster.type === 'line_bomb') {
+    if (booster.type === 'rocket_h') {
+      // Entire row only
+      for (let i = 0; i < GRID_SIZE; i++) {
+        affected.add(`${i},${booster.y}`);
+      }
+    } else if (booster.type === 'rocket_v') {
+      // Entire column only
+      for (let i = 0; i < GRID_SIZE; i++) {
+        affected.add(`${booster.x},${i}`);
+      }
+    } else if (booster.type === 'line_bomb') {
       // Entire row and column
       for (let i = 0; i < GRID_SIZE; i++) {
         affected.add(`${i},${booster.y}`); // Row
@@ -316,7 +326,8 @@ const App: React.FC = () => {
 
     // Show indicator
     const previewCells = new Set(affectedPoints.map(p => `${p.x},${p.y}`));
-    const previewColor = booster.type === 'line_bomb' ? 'rgba(59, 130, 246, 0.3)'
+    const previewColor = booster.type === 'rocket_h' || booster.type === 'rocket_v' ? 'rgba(239, 68, 68, 0.3)'
+      : booster.type === 'line_bomb' ? 'rgba(59, 130, 246, 0.3)'
       : booster.type === 'bomb' ? 'rgba(249, 115, 22, 0.3)'
       : 'rgba(168, 85, 247, 0.3)';
 
@@ -479,7 +490,8 @@ const App: React.FC = () => {
 
     // Calculate affected cells for visual indicator
     const previewCells = getBoosterAffectedCells(booster);
-    const previewColor = booster.type === 'line_bomb' ? 'rgba(59, 130, 246, 0.3)'
+    const previewColor = booster.type === 'rocket_h' || booster.type === 'rocket_v' ? 'rgba(239, 68, 68, 0.3)'
+      : booster.type === 'line_bomb' ? 'rgba(59, 130, 246, 0.3)'
       : booster.type === 'bomb' ? 'rgba(249, 115, 22, 0.3)'
       : 'rgba(168, 85, 247, 0.3)';
 
@@ -500,7 +512,17 @@ const App: React.FC = () => {
   // Get points affected by a booster explosion
   const getBoosterExplosionPoints = (booster: Booster, grid: (typeof gameState.grid)): Point[] => {
     const points: Point[] = [];
-    if (booster.type === 'line_bomb') {
+    if (booster.type === 'rocket_h') {
+      // Entire row
+      for (let i = 0; i < GRID_SIZE; i++) {
+        points.push({ x: i, y: booster.y });
+      }
+    } else if (booster.type === 'rocket_v') {
+      // Entire column
+      for (let i = 0; i < GRID_SIZE; i++) {
+        points.push({ x: booster.x, y: i });
+      }
+    } else if (booster.type === 'line_bomb') {
       for (let i = 0; i < GRID_SIZE; i++) {
         points.push({ x: i, y: booster.y }); // Row
         if (i !== booster.y) points.push({ x: booster.x, y: i }); // Column
@@ -928,6 +950,14 @@ const App: React.FC = () => {
         const boostersToCreate: Booster[] = [];
         const totalForBooster = allClearedPoints.length;
 
+        // Count unique colors in cleared points
+        const clearedColorSet = new Set<Color>();
+        allClearedPoints.forEach(p => {
+          const cell = newGrid[p.y][p.x];
+          if (cell) clearedColorSet.add(cell.color);
+        });
+        const uniqueColorsCleared = clearedColorSet.size;
+
         if (totalForBooster >= 4) {
           // Find center of ALL cleared points for booster placement
           const avgX = allClearedPoints.reduce((acc, p) => acc + p.x, 0) / totalForBooster;
@@ -946,8 +976,8 @@ const App: React.FC = () => {
 
           const centerCell = newGrid[centerPoint.y][centerPoint.x];
 
-          if (totalForBooster >= 6 && centerCell) {
-            // Color ball - count ALL colors on the grid to find the most common
+          if (totalForBooster >= 6 && uniqueColorsCleared >= 2 && centerCell) {
+            // Superball - 6+ blocks with 2+ colors: eliminates all of most common color on grid
             const gridColorCounts: Record<string, number> = {};
             const clearedSet = new Set(allClearedPoints.map(p => `${p.x},${p.y}`));
             for (let gy = 0; gy < GRID_SIZE; gy++) {
@@ -960,7 +990,6 @@ const App: React.FC = () => {
             }
             const mostCommonGridColor = Object.entries(gridColorCounts).sort((a, b) => b[1] - a[1])[0]?.[0] as Color || centerCell.color;
 
-            // Color ball - eliminates all of the MOST COMMON color on grid
             boostersToCreate.push({
               id: `booster-${Date.now()}-${Math.random()}`,
               type: 'color_ball',
@@ -968,10 +997,9 @@ const App: React.FC = () => {
               y: centerPoint.y,
               color: mostCommonGridColor
             });
-            // Remove center from cleared points (booster goes there)
             allClearedPoints = allClearedPoints.filter(p => p.x !== centerPoint.x || p.y !== centerPoint.y);
-          } else if (totalForBooster === 5 && centerCell) {
-            // Bomb - eliminates 1 layer around
+          } else if (totalForBooster >= 6 && centerCell) {
+            // Bomb - 6+ blocks (single color): eliminates 1 layer around
             boostersToCreate.push({
               id: `booster-${Date.now()}-${Math.random()}`,
               type: 'bomb',
@@ -980,11 +1008,22 @@ const App: React.FC = () => {
               color: centerCell.color
             });
             allClearedPoints = allClearedPoints.filter(p => p.x !== centerPoint.x || p.y !== centerPoint.y);
-          } else if (totalForBooster === 4 && centerCell) {
-            // Line bomb - eliminates row + column
+          } else if (totalForBooster === 5 && centerCell) {
+            // Line bomb - 5 blocks: eliminates row + column
             boostersToCreate.push({
               id: `booster-${Date.now()}-${Math.random()}`,
               type: 'line_bomb',
+              x: centerPoint.x,
+              y: centerPoint.y,
+              color: centerCell.color
+            });
+            allClearedPoints = allClearedPoints.filter(p => p.x !== centerPoint.x || p.y !== centerPoint.y);
+          } else if (totalForBooster === 4 && centerCell) {
+            // Rocket - 4 blocks: eliminates one direction (random H or V)
+            const isHorizontal = Math.random() < 0.5;
+            boostersToCreate.push({
+              id: `booster-${Date.now()}-${Math.random()}`,
+              type: isHorizontal ? 'rocket_h' : 'rocket_v',
               x: centerPoint.x,
               y: centerPoint.y,
               color: centerCell.color
@@ -1046,8 +1085,11 @@ const App: React.FC = () => {
           boostersToCreate.forEach(booster => {
             const screenX = rect.left + (booster.x * cellSize) + (cellSize / 2);
             const screenY = rect.top + (booster.y * cellSize) + (cellSize / 2);
-            const boosterText = booster.type === 'color_ball' ? '⚡ COLOR!' :
-                               booster.type === 'bomb' ? '💥 BOMB!' : '💣 LINE!';
+            const boosterText = booster.type === 'color_ball' ? '⚡ SUPERBALL!' :
+                               booster.type === 'bomb' ? '💥 BOMB!' :
+                               booster.type === 'line_bomb' ? '💣 LINE!' :
+                               booster.type === 'rocket_h' ? '🚀 ROCKET!' :
+                               booster.type === 'rocket_v' ? '🚀 ROCKET!' : '💣 LINE!';
             spawnFloatingText(screenX, screenY - 20, boosterText);
           });
         }
@@ -1510,12 +1552,24 @@ const App: React.FC = () => {
                           style={{
                             background: booster.type === 'bomb'
                               ? 'linear-gradient(135deg, #ef4444, #f97316)'
+                              : booster.type === 'line_bomb'
+                              ? 'linear-gradient(135deg, #3b82f6, #8b5cf6)'
+                              : booster.type === 'rocket_h'
+                              ? 'linear-gradient(135deg, #22c55e, #16a34a)'
+                              : booster.type === 'rocket_v'
+                              ? 'linear-gradient(135deg, #06b6d4, #0891b2)'
                               : 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
                             boxShadow: '0 4px 15px rgba(0,0,0,0.4), inset 0 2px 6px rgba(255,255,255,0.3)'
                           }}
                         >
-                          <span className="text-2xl drop-shadow-lg" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.5))' }}>
-                            {booster.type === 'bomb' ? '💥' : '💣'}
+                          <span
+                            className="text-2xl drop-shadow-lg"
+                            style={{
+                              filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.5))',
+                              transform: booster.type === 'rocket_h' ? 'rotate(45deg)' : booster.type === 'rocket_v' ? 'rotate(-45deg)' : 'none'
+                            }}
+                          >
+                            {booster.type === 'bomb' ? '💥' : booster.type === 'line_bomb' ? '💣' : (booster.type === 'rocket_h' || booster.type === 'rocket_v') ? '🚀' : '💣'}
                           </span>
                         </div>
                       )}

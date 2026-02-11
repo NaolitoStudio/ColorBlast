@@ -14,8 +14,8 @@ export type Point = {
   y: number;
 };
 
-// line_bomb = eliminates row or column, bomb = 1 layer around, color_ball = all of one color
-export type BoosterType = 'line_bomb' | 'bomb' | 'color_ball' | null;
+// rocket = one direction, line_bomb = row + column, bomb = 1 layer around, color_ball = all of one color
+export type BoosterType = 'rocket_h' | 'rocket_v' | 'line_bomb' | 'bomb' | 'color_ball' | null;
 
 export interface BoosterData {
   type: BoosterType;
