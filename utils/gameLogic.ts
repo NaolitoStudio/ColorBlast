@@ -41,17 +41,40 @@ export const createRandomGrid = (rng: Random, maxColors: number = COLORS.length,
   return grid;
 };
 
-export const generatePiece = (rng: Random, availableColors: Color[] = COLORS): PieceData => {
-  const shape = SHAPES[Math.floor(rng.next() * SHAPES.length)];
-  
-  // CRITICAL FIX: Ensure we use the exact array provided, or fallback to full list
+export const generatePiece = (rng: Random, grid: (TileData | null)[][], availableColors: Color[] = COLORS): PieceData => {
   const sourceColors = (availableColors && availableColors.length > 0) ? availableColors : COLORS;
 
+  // Attempt to find a shape that fits somewhere
+  const shuffledShapes = [...SHAPES].sort(() => rng.next() - 0.5);
+  
+  for (const shape of shuffledShapes) {
+    const piece: PieceData = {
+      id: rng.next().toString(36).substr(2, 9),
+      shape: [...shape],
+      colors: shape.map(() => sourceColors[Math.floor(rng.next() * sourceColors.length)])
+    };
+
+    // Check if it fits anywhere
+    let fits = false;
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        if (canPlacePiece(grid, piece, x, y)) {
+          fits = true;
+          break;
+        }
+      }
+      if (fits) break;
+    }
+    
+    if (fits) return piece;
+  }
+
+  // Fallback to first shape if nothing fits (unlikely on 8x8)
+  const fallbackShape = SHAPES[0];
   return {
     id: rng.next().toString(36).substr(2, 9),
-    shape: [...shape],
-    // Use sourceColors for every tile in the piece
-    colors: shape.map(() => sourceColors[Math.floor(rng.next() * sourceColors.length)])
+    shape: [...fallbackShape],
+    colors: fallbackShape.map(() => sourceColors[Math.floor(rng.next() * sourceColors.length)])
   };
 };
 

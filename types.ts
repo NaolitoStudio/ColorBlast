@@ -12,13 +12,14 @@ export type Point = {
   y: number;
 };
 
-export type BoosterType = 'line' | 'group';
+export type BoosterType = 'line' | 'group' | 'rainbow';
 
 export interface TileData {
   color: Color;
   id: string;
   isBooster?: boolean;
   boosterType?: BoosterType;
+  rainbowTargetColor?: Color; // Color the rainbow booster has transformed into
 }
 
 export interface PieceData {

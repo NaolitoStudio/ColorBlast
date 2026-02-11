@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { GameState, PieceData, Point, Color, TileData } from './types';
+import { GameState, PieceData, Point, Color, TileData, BoosterType } from './types';
 import { createRandomGrid, generatePiece, canPlacePiece, findMatchGroups, isGameOver, calculateScore } from './utils/gameLogic';
 import { GRID_SIZE, COLORS } from './constants';
 import { LEVELS } from './levels';
@@ -38,9 +38,23 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (gameState.gameOver || gameState.clearingTiles.length > 0 || gameState.currentLevel === null || flyingSquares.length > 0) return;
-    let bestBoosterMove: { boosterX: number, boosterY: number, targetX: number, targetY: number, color: Color, matchSize: number, type: 'line' | 'group' } | null = null;
+    let bestBoosterMove: { boosterX: number, boosterY: number, targetX: number, targetY: number, color: Color, matchSize: number, type: BoosterType } | null = null;
     gameState.grid.forEach((row, y) => row.forEach((cell, x) => {
       if (cell && cell.isBooster) {
+        if (cell.boosterType === 'rainbow') {
+           const neighbors = [{x:x+1, y:y}, {x:x-1, y:y}, {x:x, y:y+1}, {x:x, y:y-1}];
+           for (const n of neighbors) {
+              if (n.x >= 0 && n.x < GRID_SIZE && n.y >= 0 && n.y < GRID_SIZE && gameState.grid[n.y][n.x]) {
+                 const color = gameState.grid[n.y][n.x]!.color;
+                 const tempGrid = gameState.grid.map(r => r.map(c => c ? {...c} : null));
+                 tempGrid[y][x] = { color, id: 'temp' };
+                 const matches = findMatchGroups(tempGrid);
+                 const m = matches.find(g => g.some(p => p.x === x && p.y === y));
+                 if (m && m.length >= 3 && (!bestBoosterMove || m.length > bestBoosterMove.matchSize)) bestBoosterMove = { boosterX: x, boosterY: y, targetX: x, targetY: y, color, matchSize: m.length, type: 'rainbow' };
+              }
+           }
+           return;
+        }
         if (cell.boosterType === 'group') {
           const testColor = cell.color; const groups = findGroupsOfTwo(gameState.grid, testColor);
           if (groups.length > 0) { if (!bestBoosterMove || bestBoosterMove.type === 'line') bestBoosterMove = { boosterX: x, boosterY: y, targetX: x, targetY: y, color: testColor, matchSize: groups.length * 3, type: 'group' }; }
@@ -51,14 +65,14 @@ const App: React.FC = () => {
           for (const tc of COLORS) {
             const temp = gameState.grid.map(r => r.map(c => c ? { ...c } : null)); temp[ty][tx] = { color: tc, id: 'b-temp' }; if (tx !== x || ty !== y) temp[y][x] = null;
             const matches = findMatchGroups(temp); const boosterMatch = matches.find(g => g.some(p => p.x === tx && p.y === ty));
-            if (boosterMatch && boosterMatch.length >= 3 && (!bestBoosterMove || bestBoosterMove.type === 'group' || boosterMatch.length > bestBoosterMove.matchSize)) bestBoosterMove = { boosterX: x, boosterY: y, targetX: tx, targetY: ty, color: tc, matchSize: boosterMatch.length, type: 'line' };
+            if (boosterMatch && boosterMatch.length >= 3 && (!bestBoosterMove || (bestBoosterMove.type !== 'line') || boosterMatch.length > bestBoosterMove.matchSize)) bestBoosterMove = { boosterX: x, boosterY: y, targetX: tx, targetY: ty, color: tc, matchSize: boosterMatch.length, type: 'line' };
           }
         };
         checkPlacement(x, y); const directions = [[1, 0], [-1, 0], [0, 1], [0, -1]];
         for (const [dx, dy] of directions) { let cx = x + dx, cy = y + dy; while (cx >= 0 && cx < GRID_SIZE && cy >= 0 && cy < GRID_SIZE) { if (!gameState.grid[cy][cx]) checkPlacement(cx, cy); cx += dx; cy += dy; } }
       }
     }));
-    if (bestBoosterMove) { const t = setTimeout(() => { if (bestBoosterMove!.type === 'group') activateGroupBooster(bestBoosterMove!.boosterX, bestBoosterMove!.boosterY, bestBoosterMove!.color); else activateBooster(bestBoosterMove!.boosterX, bestBoosterMove!.boosterY, bestBoosterMove!.color, { x: bestBoosterMove!.targetX, y: bestBoosterMove!.targetY }); }, 300); return () => clearTimeout(t); }
+    if (bestBoosterMove) { const t = setTimeout(() => { if (bestBoosterMove!.type === 'group') activateGroupBooster(bestBoosterMove!.boosterX, bestBoosterMove!.boosterY, bestBoosterMove!.color); else if (bestBoosterMove!.type === 'rainbow') activateRainbowBooster(bestBoosterMove!.boosterX, bestBoosterMove!.boosterY, bestBoosterMove!.color); else activateBooster(bestBoosterMove!.boosterX, bestBoosterMove!.boosterY, bestBoosterMove!.color, { x: bestBoosterMove!.targetX, y: bestBoosterMove!.targetY }); }, 300); return () => clearTimeout(t); }
   }, [gameState.grid, gameState.gameOver, gameState.clearingTiles.length, gameState.currentLevel, flyingSquares.length]);
 
   const triggerShake = () => { setIsShaking(true); setTimeout(() => setIsShaking(false), 300); };
@@ -75,6 +89,22 @@ const App: React.FC = () => {
       if (group.length === 2) groups.push(group);
     }
     return groups;
+  };
+
+  const activateRainbowBooster = (x: number, y: number, color: Color) => {
+    setGameState(prev => { const grid = prev.grid.map(r => [...r]); grid[y][x] = { ...grid[y][x]!, rainbowTargetColor: color }; return { ...prev, grid }; });
+    setTimeout(() => {
+      setGameState(prev => {
+        const grid = prev.grid.map(r => [...r]); grid[y][x] = { color, id: `r-${Date.now()}` };
+        const ms = findMatchGroups(grid); const g = ms.find(q => q.some(p => p.x === x && p.y === y));
+        if (g) {
+          const ids = g.map(p => grid[p.y][p.x]!.id), { score: sc } = calculateScore(g.length, prev.combo + 1); triggerShake();
+          setTimeout(() => { setGameState(s => { const fg = s.grid.map(r => r.map(c => c && ids.includes(c.id) ? null : c)), ac = getAvailableColors(fg), uh = s.hand.map(p => p ? { ...p, colors: p.colors.map(c => ac.includes(c) ? c : (ac[Math.floor(Math.random() * ac.length)] || c)) } : null); return { ...s, grid: fg, hand: uh, score: s.score + sc, clearingTiles: [], combo: s.combo + 1, gameOver: isGameOver(fg, uh) }; }); }, 200);
+          return { ...prev, grid, clearingTiles: ids };
+        }
+        return { ...prev, grid };
+      });
+    }, 400);
   };
 
   const activateGroupBooster = (x: number, y: number, color: Color) => {
@@ -101,7 +131,7 @@ const App: React.FC = () => {
       return;
     }
     setFlyingSquares(moves.map((m, i) => ({ id: Date.now() + i, startX: bx, startY: by, endX: rect.left + (m.target.x * cs) + (cs / 2), endY: rect.top + (m.target.y * cs) + (cs / 2), color: m.color, progress: 0, targetPoint: m.target })));
-    setTimeout(() => { setGameState(prev => { const grid = prev.grid.map(r => [...r]); grid[y][x] = null; moves.forEach(m => grid[m.target.y][m.target.x] = { color: m.color, id: `s-${Date.now()}-${Math.random()}` }); const ms = findMatchGroups(grid); if (ms.length > 0) { const cleared = ms.flat(), total = cleared.length, nc = prev.combo + 1, { score: sc, text: tx, multiplier: mu } = calculateScore(total, nc), ids = cleared.map(p => grid[p.y][p.x]!.id); triggerShake(); setTimeout(() => { setGameState(s => { const fg = s.grid.map(r => r.map(c => c && ids.includes(c.id) ? null : c)), ac = getAvailableColors(fg), uh = s.hand.map(p => p ? { ...p, colors: p.colors.map(c => ac.includes(c) ? c : (ac[Math.floor(Math.random() * ac.length)] || c)) } : null); return { ...s, grid: fg, hand: uh, score: s.score + sc, clearingTiles: [], combo: nc, gameOver: isGameOver(fg, uh) }; }); }, 200); return { ...prev, grid, clearingTiles: ids }; } return { ...prev, grid }; }); setFlyingSquares([]); }, 400);
+    setTimeout(() => { setGameState(prev => { const grid = prev.grid.map(r => [...r]); grid[y][x] = null; moves.forEach(m => grid[m.target.y][m.target.x] = { color: m.color, id: `s-${Date.now()}-${Math.random()}` }); const ms = findMatchGroups(grid); if (ms.length > 0) { const cleared = ms.flat(), total = cleared.length, nc = prev.combo + 1, { score: sc } = calculateScore(total, nc), ids = cleared.map(p => grid[p.y][p.x]!.id); triggerShake(); setTimeout(() => { setGameState(s => { const fg = s.grid.map(r => r.map(c => c && ids.includes(c.id) ? null : c)), ac = getAvailableColors(fg), uh = s.hand.map(p => p ? { ...p, colors: p.colors.map(c => ac.includes(c) ? c : (ac[Math.floor(Math.random() * ac.length)] || c)) } : null); return { ...s, grid: fg, hand: uh, score: s.score + sc, clearingTiles: [], combo: nc, gameOver: isGameOver(fg, uh) }; }); }, 200); return { ...prev, grid, clearingTiles: ids }; } return { ...prev, grid }; }); setFlyingSquares([]); }, 400);
   };
 
   const activateBooster = (x: number, y: number, color: Color, target: { x: number, y: number }) => {
@@ -111,7 +141,7 @@ const App: React.FC = () => {
     setTimeout(() => { setGameState(prev => { const ms = findMatchGroups(prev.grid); if (ms.length > 0) { const cleared = ms.flat(), total = cleared.length, nc = prev.combo + 1, { score: sc, text: tx, multiplier: mu } = calculateScore(total, nc), ids = cleared.map(p => prev.grid[p.y][p.x]!.id); if (boardRef.current) { const rect = boardRef.current.getBoundingClientRect(), cs = rect.width / GRID_SIZE; cleared.forEach(p => spawnParticles(rect.left + (p.x * cs) + (cs / 2), rect.top + (p.y * cs) + (cs / 2), prev.grid[p.y][p.x]!.color, 6)); if (tx) spawnFloatingText(rect.left + (cleared.reduce((a, b) => a + b.x, 0) / total * cs) + (cs / 2), rect.top + (cleared.reduce((a, b) => a + b.y, 0) / total * cs) + (cs / 2), `${tx} x${mu}`); } triggerShake(); setTimeout(() => { setGameState(s => { const fg = s.grid.map(r => r.map(c => c && ids.includes(c.id) ? null : c)), ac = getAvailableColors(fg), uh = s.hand.map(p => p ? { ...p, colors: p.colors.map(c => ac.includes(c) ? c : (ac[Math.floor(Math.random() * ac.length)] || c)) } : null); return { ...s, grid: fg, hand: uh, score: s.score + sc, clearingTiles: [], combo: nc, gameOver: isGameOver(fg, uh) }; }); }, 200); return { ...prev, clearingTiles: ids }; } return prev; }); }, 250);
   };
 
-  const startLevel = (id: number) => { const l = LEVELS.find(lv => lv.id === id); if (!l) return; const rng = new Random(l.seed), mc = l.maxStartingColors || COLORS.length, ic = COLORS.slice(0, Math.min(mc, COLORS.length)), ih = [generatePiece(rng, ic), generatePiece(rng, ic), generatePiece(rng, ic)]; setGameState(prev => ({ ...prev, grid: createRandomGrid(rng, mc, 0.3), score: 0, hand: ih, gameOver: false, selectedPieceIndex: null, clearingTiles: [], combo: 1, currentLevel: id, rngSeed: l.seed })); setParticles([]); setFloatingTexts([]); };
+  const startLevel = (id: number) => { const l = LEVELS.find(lv => lv.id === id); if (!l) return; const rng = new Random(l.seed), mc = l.maxStartingColors || COLORS.length, ic = COLORS.slice(0, Math.min(mc, COLORS.length)); const rg = createRandomGrid(rng, mc, 0.3); const ih = [generatePiece(rng, rg, ic), generatePiece(rng, rg, ic), generatePiece(rng, rg, ic)]; setGameState(prev => ({ ...prev, grid: rg, score: 0, hand: ih, gameOver: false, selectedPieceIndex: null, clearingTiles: [], combo: 1, currentLevel: id, rngSeed: l.seed })); setParticles([]); setFloatingTexts([]); };
   const handleRestart = () => { if (gameState.currentLevel) startLevel(gameState.currentLevel); };
   const startDragging = (e: React.PointerEvent, i: number) => { if (gameState.hand[i] === null || gameState.gameOver) return; setGameState(prev => ({ ...prev, selectedPieceIndex: i })); setDragPosition({ x: e.clientX, y: e.clientY }); (e.target as HTMLElement).setPointerCapture(e.pointerId); };
   const handlePointerMove = (e: React.PointerEvent) => {
@@ -125,21 +155,21 @@ const App: React.FC = () => {
   const stopDragging = (e: React.PointerEvent) => { if (gameState.selectedPieceIndex === null) return; if (hoveredCell) placePieceAt(hoveredCell.x, hoveredCell.y); else setGameState(prev => ({ ...prev, selectedPieceIndex: null })); setDragPosition(null); setHoveredCell(null); };
   const getAvailableColors = (g: (TileData | null)[][]): Color[] => { const pc = new Set<Color>(); g.forEach(r => r.forEach(c => { if (c && !c.isBooster) pc.add(c.color); })); const res = COLORS.filter(c => pc.has(c)); return res.length > 0 ? res : COLORS; };
   const isGhostCell = (x: number, y: number) => { if (gameState.selectedPieceIndex === null || !hoveredCell) return null; const p = gameState.hand[gameState.selectedPieceIndex]; if (!p) return null; const gi = p.shape.findIndex(q => hoveredCell.x + q.x === x && hoveredCell.y + q.y === y); if (gi !== -1) { const v = canPlacePiece(gameState.grid, p, hoveredCell.x, hoveredCell.y); return { color: p.colors[gi], isValid: v }; } return null; };
-  const getIsOnBoosterLine = (x: number, y: number) => gameState.grid.some((r, ry) => r.some((c, rx) => c?.isBooster && c.boosterType !== 'group' && (rx === x || ry === y)));
+  const getIsOnBoosterLine = (x: number, y: number) => gameState.grid.some((r, ry) => r.some((c, rx) => c?.isBooster && c.boosterType === 'line' && (rx === x || ry === y)));
 
   const placePieceAt = (x: number, y: number) => {
     const { selectedPieceIndex, hand, grid, score, combo, rngSeed } = gameState, p = hand[selectedPieceIndex!];
     if (p && canPlacePiece(grid, p, x, y)) {
       const ng = grid.map(r => [...r]); p.shape.forEach((q, i) => ng[y + q.y][x + q.x] = { color: p.colors[i], id: `${Date.now()}-${Math.random()}` });
       const nh = [...hand]; nh[selectedPieceIndex!] = null;
-      if (nh.every(q => q === null)) { const ac = getAvailableColors(ng), rng = new Random(`${rngSeed}-${score}-${ng.flat().filter(c => c).length}`); nh[0] = generatePiece(rng, ac); nh[1] = generatePiece(rng, ac); nh[2] = generatePiece(rng, ac); }
+      if (nh.every(q => q === null)) { const ac = getAvailableColors(ng), rng = new Random(`${rngSeed}-${score}-${ng.flat().filter(c => c).length}`); nh[0] = generatePiece(rng, ng, ac); nh[1] = generatePiece(rng, ng, ac); nh[2] = generatePiece(rng, ng, ac); }
       const ms = findMatchGroups(ng);
       if (ms.length > 0) {
         const cl = ms.flat(), tl = cl.length, nc = combo + 1, { score: sc, text: tx, multiplier: mu } = calculateScore(tl, nc), ids = cl.map(q => ng[q.y][q.x]!.id), bts: {x: number, y: number, color: Color}[] = [];
         ms.forEach(g => { if (g.length >= 4) { const q = g[Math.floor(Math.random() * g.length)]; bts.push({ x: q.x, y: q.y, color: ng[q.y][q.x]!.color }); } });
         if (boardRef.current) { const r = boardRef.current.getBoundingClientRect(), cs = r.width / GRID_SIZE; cl.forEach(q => spawnParticles(r.left + (q.x * cs) + (cs / 2), r.top + (q.y * cs) + (cs / 2), ng[q.y][q.x]!.color, 6)); if (tx) spawnFloatingText(r.left + (cl.reduce((a, b) => a + b.x, 0) / tl * cs) + (cs / 2), r.top + (cl.reduce((a, b) => a + b.y, 0) / tl * cs) + (cs / 2), `${tx} x${mu}`); }
         triggerShake(); setGameState(prev => ({ ...prev, grid: ng, score: score + sc, hand: nh, selectedPieceIndex: null, clearingTiles: ids.filter(id => !bts.map(bt => ng[bt.y][bt.x]!.id).includes(id)), combo: nc }));
-        setTimeout(() => { setGameState(prev => { const fg = prev.grid.map((r, ry) => r.map((c, rx) => { if (!c) return null; const bt = bts.find(b => b.x === rx && b.y === ry); if (bt) return { ...c, isBooster: true, boosterType: tl >= 6 ? 'group' : 'line', id: `booster-${Date.now()}-${Math.random()}` }; return ids.includes(c.id) ? null : c; })); return { ...prev, grid: fg, clearingTiles: [], gameOver: isGameOver(fg, prev.hand) }; }); }, 200);
+        setTimeout(() => { setGameState(prev => { const fg = prev.grid.map((r, ry) => r.map((c, rx) => { if (!c) return null; const bt = bts.find(b => b.x === rx && b.y === ry); if (bt) return { ...c, isBooster: true, boosterType: tl >= 6 ? 'group' : (tl === 5 ? 'line' : 'rainbow'), id: `booster-${Date.now()}-${Math.random()}` }; return ids.includes(c.id) ? null : c; })); return { ...prev, grid: fg, clearingTiles: [], gameOver: isGameOver(fg, prev.hand) }; }); }, 200);
       } else setGameState(prev => ({ ...prev, grid: ng, score: score + p.shape.length * 10, hand: nh, selectedPieceIndex: null, gameOver: isGameOver(ng, nh), combo: 1 }));
     } else setGameState(prev => ({ ...prev, selectedPieceIndex: null }));
   };
@@ -170,7 +200,7 @@ const App: React.FC = () => {
             <button onClick={handleRestart} className="ml-4 bg-slate-800 hover:bg-slate-700 w-12 h-12 rounded-2xl flex items-center justify-center transition-all active:scale-90 border border-slate-700 shadow-lg"><i className="fa-solid fa-rotate-right text-xl text-blue-400"></i></button>
           </div>
           <div ref={boardRef} className={`relative aspect-square bg-slate-900 rounded-3xl p-1.5 shadow-2xl border border-slate-800 ${isShaking ? 'shake-animation' : ''}`}>
-            <div className="board-grid w-full h-full gap-1.5">{gameState.grid.map((row, y) => row.map((cell, x) => { const ghost = isGhostCell(x, y); const onLine = !cell && getIsOnBoosterLine(x, y); return (<div key={`${x}-${y}`} className={`relative rounded-lg transition-all duration-300 ${cell ? 'shadow-[0_4px_10px_rgba(0,0,0,0.3)]' : (onLine ? 'bg-slate-700/40' : 'bg-slate-800/30')} ${!cell ? 'border border-white/5' : ''}`} style={{ backgroundColor: cell?.isBooster ? '#475569' : (cell?.color || (ghost ? ghost.color : undefined)), opacity: ghost ? (ghost.isValid ? 0.7 : 0.15) : 1, transform: gameState.clearingTiles.includes(cell?.id || '') ? 'scale(0) rotate(90deg)' : (ghost && ghost.isValid ? 'scale(0.95)' : 'scale(1)'), boxShadow: cell ? `inset 0 2px 4px rgba(255,255,255,0.2), 0 4px 8px rgba(0,0,0,0.4)` : 'none', border: cell?.isBooster ? (cell.boosterType === 'group' ? '3px solid #fbbf24' : '3px solid white') : undefined }}>{cell?.isBooster && (<div className="absolute inset-0 flex items-center justify-center animate-pulse"><i className={`fa-solid ${cell.boosterType === 'group' ? 'fa-wand-magic-sparkles text-yellow-400' : 'fa-bolt text-white'} text-xs sm:text-lg`}></i></div>)}{cell && (<div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent rounded-lg pointer-events-none" />)}{ghost && !ghost.isValid && (<div className="absolute inset-0 flex items-center justify-center"><div className="w-2 h-2 bg-red-500 rounded-full opacity-60"></div></div>)}</div>); }))}</div>
+            <div className="board-grid w-full h-full gap-1.5">{gameState.grid.map((row, y) => row.map((cell, x) => { const ghost = isGhostCell(x, y); const onLine = !cell && getIsOnBoosterLine(x, y); return (<div key={`${x}-${y}`} className={`relative rounded-lg transition-all duration-300 ${cell ? 'shadow-[0_4px_10px_rgba(0,0,0,0.3)]' : (onLine ? 'bg-slate-700/40' : 'bg-slate-800/30')} ${!cell ? 'border border-white/5' : ''}`} style={{ backgroundColor: cell?.isBooster ? (cell.rainbowTargetColor || '#475569') : (cell?.color || (ghost ? ghost.color : undefined)), opacity: ghost ? (ghost.isValid ? 0.7 : 0.15) : 1, transform: gameState.clearingTiles.includes(cell?.id || '') ? 'scale(0) rotate(90deg)' : (ghost && ghost.isValid ? 'scale(0.95)' : 'scale(1)'), boxShadow: cell ? `inset 0 2px 4px rgba(255,255,255,0.2), 0 4px 8px rgba(0,0,0,0.4)` : 'none', border: cell?.isBooster ? (cell.boosterType === 'group' ? '3px solid #fbbf24' : (cell.boosterType === 'rainbow' ? '3px solid #06b6d4' : '3px solid white')) : undefined }}>{cell?.isBooster && (<div className="absolute inset-0 flex items-center justify-center animate-pulse"><i className={`fa-solid ${cell.boosterType === 'group' ? 'fa-wand-magic-sparkles text-yellow-400' : (cell.boosterType === 'rainbow' ? 'fa-star text-cyan-400' : 'fa-bolt text-white')} text-xs sm:text-lg`}></i></div>)}{cell && (<div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent rounded-lg pointer-events-none" />)}{ghost && !ghost.isValid && (<div className="absolute inset-0 flex items-center justify-center"><div className="w-2 h-2 bg-red-500 rounded-full opacity-60"></div></div>)}</div>); }))}</div>
             {gameState.gameOver && (<div className="absolute inset-0 bg-slate-950/90 backdrop-blur-md rounded-3xl flex flex-col items-center justify-center p-8 text-center z-50"><h2 className="text-4xl font-black mb-1 text-white">GAME OVER</h2><p className="text-slate-400 text-sm mb-8 font-medium">No valid moves left!</p><div className="bg-slate-900 rounded-2xl p-6 w-full mb-8 border border-slate-800"><span className="text-slate-500 text-[10px] uppercase font-bold tracking-widest block mb-2">Final Score</span><span className="text-5xl font-black text-white">{gameState.score}</span></div><button onClick={handleRestart} className="bg-blue-600 hover:bg-blue-500 text-white font-black py-4 px-12 rounded-2xl transition-all active:scale-95">PLAY AGAIN</button></div>)}
           </div>
           {dragPosition && gameState.selectedPieceIndex !== null && (<div className="drag-preview" style={{ left: dragPosition.x, top: dragPosition.y - DRAG_OFFSET_Y }}><PiecePreview piece={gameState.hand[gameState.selectedPieceIndex]!} active={true} size="large" /></div>)}
