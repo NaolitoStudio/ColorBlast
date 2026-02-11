@@ -4,6 +4,13 @@ import { GameState, PieceData, Point, Color, LevelObjective, Booster, BoosterTyp
 import { createRandomGrid, generatePiece, generateValidHand, canPlacePiece, findMatchGroups, findGroupCenter, getBombExplosionPoints, isGameOver, calculateScore, initializeObjectives, getAdjacentToMatches } from './utils/gameLogic';
 import { GRID_SIZE, getLevelConfig } from './constants';
 
+// Block images by color
+import orangeBlockImg from './Graphics/1770817203228-83afc8e6-c05d-4fff-b742-d6586f36ee10.jpg';
+
+const BLOCK_IMAGES: Record<string, string> = {
+  [Color.RED]: orangeBlockImg,
+};
+
 const DRAG_OFFSET_Y = 100; // How much the piece is lifted above the finger/cursor
 
 interface Particle {
@@ -1344,6 +1351,34 @@ const App: React.FC = () => {
               const booster = gameState.boosters.find(b => b.x === x && b.y === y);
               const isAffected = affectedCells.has(`${x},${y}`);
 
+              // Determine if we should use an image
+              const cellColor = cell?.color;
+              const ghostColor = ghost?.color;
+              const cellHasImage = cellColor && BLOCK_IMAGES[cellColor];
+              const ghostHasImage = ghostColor && BLOCK_IMAGES[ghostColor];
+
+              // Calculate background
+              let bgColor = 'rgba(30, 41, 59, 0.3)'; // empty cell
+              let bgImage = 'none';
+
+              if (booster) {
+                bgColor = 'transparent';
+              } else if (cell) {
+                if (cellHasImage) {
+                  bgColor = 'transparent';
+                  bgImage = `url(${BLOCK_IMAGES[cellColor]})`;
+                } else {
+                  bgColor = cellColor;
+                }
+              } else if (ghost) {
+                if (ghostHasImage) {
+                  bgColor = 'transparent';
+                  bgImage = `url(${BLOCK_IMAGES[ghostColor]})`;
+                } else {
+                  bgColor = ghostColor;
+                }
+              }
+
               return (
                 <div
                   key={`${x}-${y}`}
@@ -1354,7 +1389,10 @@ const App: React.FC = () => {
                     ${booster ? 'cursor-pointer active:scale-95' : ''}
                   `}
                   style={{
-                    backgroundColor: booster ? 'transparent' : (cell?.color || (ghost ? ghost.color : 'rgba(30, 41, 59, 0.3)')),
+                    backgroundColor: bgColor,
+                    backgroundImage: bgImage,
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'center',
                     opacity: ghost ? (ghost.isValid ? 0.7 : 0.15) : 1,
                     transform: gameState.clearingTiles.includes(cell?.id || '')
                       ? 'scale(0) rotate(90deg)'
@@ -1624,12 +1662,18 @@ const PiecePreview: React.FC<{ piece: PieceData, active: boolean, size?: 'small'
         const indexInShape = piece.shape.findIndex(p => p.x === x && p.y === y);
         const inShape = indexInShape !== -1;
         
+        const color = inShape ? piece.colors[indexInShape] : undefined;
+        const hasImage = color && BLOCK_IMAGES[color];
+
         return (
-          <div 
+          <div
             key={i}
             className={`${boxSize} rounded-lg transition-all duration-200 ${inShape ? 'shadow-md' : 'bg-transparent'}`}
-            style={{ 
-              backgroundColor: inShape ? piece.colors[indexInShape] : 'transparent',
+            style={{
+              backgroundColor: hasImage ? 'transparent' : (inShape ? color : 'transparent'),
+              backgroundImage: hasImage ? `url(${BLOCK_IMAGES[color]})` : 'none',
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
               boxShadow: inShape ? 'inset 0 1px 3px rgba(255,255,255,0.4), 0 2px 4px rgba(0,0,0,0.3)' : 'none'
             }}
           />
