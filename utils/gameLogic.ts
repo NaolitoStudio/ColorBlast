@@ -186,3 +186,58 @@ export const calculateScore = (totalCleared: number, combo: number): { score: nu
   
   return { score, text, multiplier: totalMultiplier };
 };
+
+export const checkWinCondition = (grid: (TileData | null)[][], hand: (PieceData | null)[]): { isWin: boolean, solution?: { pieceIndex: number, x: number, y: number } } => {
+  const remainingTiles = grid.flat().filter(t => t !== null && !t.isBooster);
+  if (remainingTiles.length === 0) return { isWin: false };
+
+  const uniqueColors = new Set(remainingTiles.map(t => t!.color));
+  if (uniqueColors.size !== 1) return { isWin: false };
+
+  // Only 1 color remains. Now check if any piece in hand can clear the remaining tiles.
+  // We need to find if placing a piece would result in a match that covers ALL remaining tiles.
+  const targetColor = Array.from(uniqueColors)[0];
+  const activePieces = hand.map((p, i) => ({ p, i })).filter(item => item.p !== null);
+
+  for (const { p, i } of activePieces) {
+    if (!p) continue;
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        if (canPlacePiece(grid, p, x, y)) {
+          // Check if this placement clears everything
+          const tempGrid = grid.map(r => [...r]);
+          p.shape.forEach((q, idx) => {
+            tempGrid[y + q.y][x + q.x] = { color: p.colors[idx], id: 'temp' };
+          });
+          
+          const groups = findMatchGroups(tempGrid);
+          const clearedPoints = new Set<string>();
+          groups.forEach(group => group.forEach(pt => clearedPoints.add(`${pt.x},${pt.y}`)));
+
+          // Does it clear all existing tiles?
+          const allExistingCleared = remainingTiles.every(t => {
+            // Find where this tile is
+            for (let ty = 0; ty < GRID_SIZE; ty++) {
+              for (let tx = 0; tx < GRID_SIZE; tx++) {
+                if (grid[ty][tx]?.id === t!.id) {
+                  return clearedPoints.has(`${tx},${ty}`);
+                }
+              }
+            }
+            return false;
+          });
+
+          if (allExistingCleared) {
+            // Also need to check if it leaves the board blank (all new pieces cleared too)
+            const totalTilesInTemp = tempGrid.flat().filter(t => t !== null && !t.isBooster).length;
+            if (clearedPoints.size === totalTilesInTemp) {
+              return { isWin: true, solution: { pieceIndex: i, x, y } };
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return { isWin: false };
+};

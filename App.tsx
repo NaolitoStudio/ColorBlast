@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { GameState, PieceData, Point, Color, TileData, BoosterType } from './types';
-import { createRandomGrid, generatePiece, canPlacePiece, findMatchGroups, isGameOver, calculateScore } from './utils/gameLogic';
+import { GameState, PieceData, Point, Color, TileData, BoosterType, SaveData } from './types';
+import { createRandomGrid, generatePiece, canPlacePiece, findMatchGroups, isGameOver, calculateScore, checkWinCondition } from './utils/gameLogic';
 import { GRID_SIZE, COLORS } from './constants';
 import { LEVELS } from './levels';
 import { Random } from './utils/random';
@@ -13,7 +13,13 @@ interface FloatingText { id: number; x: number; y: number; text: string; life: n
 interface FlyingSquare { id: number; startX: number; startY: number; endX: number; endY: number; color: string; progress: number; targetPoint: Point; }
 
 const App: React.FC = () => {
+  const [saveData, setSaveData] = useState<SaveData>(() => {
+    const saved = localStorage.getItem('colorBlastSave');
+    return saved ? JSON.parse(saved) : { unlockedLevel: 1, stars: {}, totalStars: 0 };
+  });
   const [gameState, setGameState] = useState<GameState>(() => ({ grid: [], score: 0, highScore: Number(localStorage.getItem('highScore')) || 0, hand: [], gameOver: false, selectedPieceIndex: null, clearingTiles: [], combo: 1, currentLevel: null, rngSeed: null }));
+  const [lastUnlockedLevel, setLastUnlockedLevel] = useState<number>(saveData.unlockedLevel);
+  const [animatingLevelId, setAnimatingLevelId] = useState<number | null>(null);
   const [hoveredCell, setHoveredCell] = useState<Point | null>(null);
   const [dragPosition, setDragPosition] = useState<{ x: number, y: number } | null>(null);
   const [particles, setParticles] = useState<Particle[]>([]);
@@ -37,7 +43,21 @@ const App: React.FC = () => {
   useEffect(() => { if (gameState.score > gameState.highScore) { setGameState(prev => ({ ...prev, highScore: prev.score })); localStorage.setItem('highScore', gameState.score.toString()); } }, [gameState.score, gameState.highScore]);
 
   useEffect(() => {
-    if (gameState.gameOver || gameState.clearingTiles.length > 0 || gameState.currentLevel === null || flyingSquares.length > 0) return;
+    localStorage.setItem('colorBlastSave', JSON.stringify(saveData));
+  }, [saveData]);
+
+  useEffect(() => {
+    if (gameState.currentLevel === null && saveData.unlockedLevel > lastUnlockedLevel) {
+      setAnimatingLevelId(saveData.unlockedLevel);
+      setTimeout(() => {
+        setLastUnlockedLevel(saveData.unlockedLevel);
+        setAnimatingLevelId(null);
+      }, 1000);
+    }
+  }, [gameState.currentLevel, saveData.unlockedLevel, lastUnlockedLevel]);
+
+  useEffect(() => {
+    if (gameState.gameOver || gameState.isWinning || gameState.clearingTiles.length > 0 || gameState.currentLevel === null || flyingSquares.length > 0) return;
     let bestBoosterMove: { boosterX: number, boosterY: number, targetX: number, targetY: number, color: Color, matchSize: number, type: BoosterType } | null = null;
     gameState.grid.forEach((row, y) => row.forEach((cell, x) => {
       if (cell && cell.isBooster) {
@@ -107,6 +127,63 @@ const App: React.FC = () => {
     }, 400);
   };
 
+  const checkWin = (grid: (TileData | null)[][], hand: (PieceData | null)[]) => {
+    const win = checkWinCondition(grid, hand);
+    if (win.isWin && win.solution) {
+      const { pieceIndex, x, y } = win.solution;
+      const piece = hand[pieceIndex]!;
+      const rect = boardRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const cs = rect.width / GRID_SIZE;
+      
+      // Calculate piece visual center for start position
+      const pieceElements = document.querySelectorAll(`[onpointerdown]`);
+      const pieceRect = pieceElements[pieceIndex]?.getBoundingClientRect();
+      const startX = pieceRect ? pieceRect.left + pieceRect.width / 2 : window.innerWidth / 2;
+      const startY = pieceRect ? pieceRect.top + pieceRect.height / 2 : window.innerHeight * 0.8;
+
+      const newFlying: FlyingSquare[] = piece.shape.map((p, i) => ({
+        id: Date.now() + i + 1000,
+        startX: startX,
+        startY: startY,
+        endX: rect.left + (x + p.x) * cs + cs / 2,
+        endY: rect.top + (y + p.y) * cs + cs / 2,
+        color: piece.colors[i],
+        progress: 0,
+        targetPoint: { x: x + p.x, y: y + p.y }
+      }));
+
+      setGameState(prev => ({ ...prev, isWinning: true, hand: prev.hand.map((p, i) => i === pieceIndex ? null : p) }));
+      setFlyingSquares(newFlying);
+
+      setTimeout(() => {
+        setGameState(prev => {
+          const ng = prev.grid.map(r => r.map(c => c && c.isBooster ? null : c)); // Remove boosters
+          piece.shape.forEach((p, i) => {
+            ng[y + p.y][x + p.x] = { color: piece.colors[i], id: `win-${Date.now()}-${i}` };
+          });
+          const ms = findMatchGroups(ng);
+          const cl = ms.flat();
+          const ids = cl.map(q => ng[q.y][q.x]!.id);
+          triggerShake();
+          
+          setTimeout(() => {
+            setGameState(s => ({
+              ...s,
+              grid: s.grid.map(r => r.map(c => c && ids.includes(c.id) ? null : c)),
+              clearingTiles: [],
+              showLevelComplete: true,
+              wonStars: Math.floor(Math.random() * 3) + 1
+            }));
+          }, 200);
+
+          return { ...prev, grid: ng, clearingTiles: ids };
+        });
+        setFlyingSquares([]);
+      }, 500);
+    }
+  };
+
   const activateGroupBooster = (x: number, y: number, color: Color) => {
     let targetColor = color;
     if (!gameState.grid.some(r => r.some(c => c && !c.isBooster && c.color === color))) {
@@ -157,6 +234,20 @@ const App: React.FC = () => {
   const isGhostCell = (x: number, y: number) => { if (gameState.selectedPieceIndex === null || !hoveredCell) return null; const p = gameState.hand[gameState.selectedPieceIndex]; if (!p) return null; const gi = p.shape.findIndex(q => hoveredCell.x + q.x === x && hoveredCell.y + q.y === y); if (gi !== -1) { const v = canPlacePiece(gameState.grid, p, hoveredCell.x, hoveredCell.y); return { color: p.colors[gi], isValid: v }; } return null; };
   const getIsOnBoosterLine = (x: number, y: number) => gameState.grid.some((r, ry) => r.some((c, rx) => c?.isBooster && c.boosterType === 'line' && (rx === x || ry === y)));
 
+  const collectWin = () => {
+    const nextLevel = (gameState.currentLevel || 0) + 1;
+    setSaveData(prev => {
+      const currentStars = prev.stars[gameState.currentLevel!] || 0;
+      const newStarsValue = Math.max(currentStars, gameState.wonStars || 0);
+      const updatedStars = { ...prev.stars, [gameState.currentLevel!]: newStarsValue };
+      const totalStars = Object.values(updatedStars).reduce((acc: number, val: number) => acc + val, 0);
+      return { unlockedLevel: Math.max(prev.unlockedLevel, nextLevel), stars: updatedStars, totalStars };
+    });
+    setGameState(prev => ({ ...prev, currentLevel: null, showLevelComplete: false, isWinning: false }));
+  };
+
+  const handleResetSave = () => { if (window.confirm("Reset all progress?")) { const reset = { unlockedLevel: 1, stars: {}, totalStars: 0 }; setSaveData(reset); setLastUnlockedLevel(1); localStorage.setItem('colorBlastSave', JSON.stringify(reset)); } };
+
   const placePieceAt = (x: number, y: number) => {
     const { selectedPieceIndex, hand, grid, score, combo, rngSeed } = gameState, p = hand[selectedPieceIndex!];
     if (p && canPlacePiece(grid, p, x, y)) {
@@ -169,8 +260,19 @@ const App: React.FC = () => {
         ms.forEach(g => { if (g.length >= 4) { const q = g[Math.floor(Math.random() * g.length)]; bts.push({ x: q.x, y: q.y, color: ng[q.y][q.x]!.color }); } });
         if (boardRef.current) { const r = boardRef.current.getBoundingClientRect(), cs = r.width / GRID_SIZE; cl.forEach(q => spawnParticles(r.left + (q.x * cs) + (cs / 2), r.top + (q.y * cs) + (cs / 2), ng[q.y][q.x]!.color, 6)); if (tx) spawnFloatingText(r.left + (cl.reduce((a, b) => a + b.x, 0) / tl * cs) + (cs / 2), r.top + (cl.reduce((a, b) => a + b.y, 0) / tl * cs) + (cs / 2), `${tx} x${mu}`); }
         triggerShake(); setGameState(prev => ({ ...prev, grid: ng, score: score + sc, hand: nh, selectedPieceIndex: null, clearingTiles: ids.filter(id => !bts.map(bt => ng[bt.y][bt.x]!.id).includes(id)), combo: nc }));
-        setTimeout(() => { setGameState(prev => { const fg = prev.grid.map((r, ry) => r.map((c, rx) => { if (!c) return null; const bt = bts.find(b => b.x === rx && b.y === ry); if (bt) return { ...c, isBooster: true, boosterType: tl >= 6 ? 'group' : (tl === 5 ? 'line' : 'rainbow'), id: `booster-${Date.now()}-${Math.random()}` }; return ids.includes(c.id) ? null : c; })); return { ...prev, grid: fg, clearingTiles: [], gameOver: isGameOver(fg, prev.hand) }; }); }, 200);
-      } else setGameState(prev => ({ ...prev, grid: ng, score: score + p.shape.length * 10, hand: nh, selectedPieceIndex: null, gameOver: isGameOver(ng, nh), combo: 1 }));
+        setTimeout(() => {
+          setGameState(prev => {
+            const fg = prev.grid.map((r, ry) => r.map((c, rx) => { if (!c) return null; const bt = bts.find(b => b.x === rx && b.y === ry); if (bt) return { ...c, isBooster: true, boosterType: tl >= 6 ? 'group' : (tl === 5 ? 'line' : 'rainbow'), id: `booster-${Date.now()}-${Math.random()}` }; return ids.includes(c.id) ? null : c; }));
+            const winResult = checkWinCondition(fg, prev.hand);
+            if (winResult.isWin) { setTimeout(() => checkWin(fg, prev.hand), 300); }
+            return { ...prev, grid: fg, clearingTiles: [], gameOver: isGameOver(fg, prev.hand) };
+          });
+        }, 200);
+      } else {
+        const winResult = checkWinCondition(ng, nh);
+        if (winResult.isWin) { setTimeout(() => checkWin(ng, nh), 300); }
+        setGameState(prev => ({ ...prev, grid: ng, score: score + p.shape.length * 10, hand: nh, selectedPieceIndex: null, gameOver: isGameOver(ng, nh), combo: 1 }));
+      }
     } else setGameState(prev => ({ ...prev, selectedPieceIndex: null }));
   };
 
@@ -178,8 +280,46 @@ const App: React.FC = () => {
     <div className="flex flex-col h-screen w-full max-w-md mx-auto p-4 select-none bg-slate-950 overflow-hidden" onPointerMove={handlePointerMove} onPointerUp={stopDragging}>
       {gameState.currentLevel === null ? (
         <div className="flex-1 flex flex-col overflow-hidden">
-          <h1 className="text-4xl font-black text-center mb-8 bg-gradient-to-br from-blue-400 via-purple-500 to-pink-500 bg-clip-text text-transparent italic tracking-tighter">LEVEL SELECT</h1>
-          <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar"><div className="flex flex-col-reverse gap-4 pb-8">{LEVELS.map(l => (<button key={l.id} onClick={() => startLevel(l.id)} className="bg-slate-900 hover:bg-slate-800 border-2 border-slate-800 p-8 rounded-3xl text-2xl font-black text-white transition-all active:scale-95 shadow-xl">{l.name}</button>))}</div></div>
+          <div className="flex justify-between items-center mb-4">
+            <h1 className="text-4xl font-black bg-gradient-to-br from-blue-400 via-purple-500 to-pink-500 bg-clip-text text-transparent italic tracking-tighter">LEVEL SELECT</h1>
+            <div className="text-right">
+              <div className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">Total Stars</div>
+              <div className="text-xl font-black text-yellow-500">⭐ {saveData.totalStars}</div>
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+            <div className="flex flex-col-reverse gap-4 pb-8">
+              {LEVELS.map(l => {
+                const isUnlocked = l.id <= saveData.unlockedLevel;
+                const isNewlyUnlocked = l.id === animatingLevelId;
+                const stars = saveData.stars[l.id] || 0;
+                
+                if (!isUnlocked && !isNewlyUnlocked) return null;
+
+                return (
+                  <button 
+                    key={l.id} 
+                    onClick={() => startLevel(l.id)} 
+                    className={`bg-slate-900 hover:bg-slate-800 border-2 ${isNewlyUnlocked ? 'animate-bounce border-yellow-500' : 'border-slate-800'} p-6 rounded-3xl flex justify-between items-center transition-all active:scale-95 shadow-xl group relative overflow-hidden`}
+                  >
+                    {isNewlyUnlocked && <div className="absolute inset-0 bg-yellow-500/10 animate-pulse" />}
+                    <div className="flex flex-col items-start">
+                      <span className="text-2xl font-black text-white group-hover:text-blue-400 transition-colors">{l.name}</span>
+                      <div className="flex gap-1 mt-1">
+                        {[1, 2, 3].map(s => (
+                          <span key={s} className={`text-sm ${s <= stars ? 'text-yellow-500' : 'text-slate-700'}`}>⭐</span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="w-12 h-12 rounded-2xl bg-slate-800 flex items-center justify-center group-hover:bg-blue-600 transition-colors">
+                      <i className="fa-solid fa-play text-white ml-1"></i>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <button onClick={handleResetSave} className="mt-4 mb-4 text-[10px] font-bold text-slate-600 uppercase tracking-widest hover:text-red-500 transition-colors">Reset Progress</button>
         </div>
       ) : (
         <>
@@ -202,6 +342,32 @@ const App: React.FC = () => {
           <div ref={boardRef} className={`relative aspect-square bg-slate-900 rounded-3xl p-1.5 shadow-2xl border border-slate-800 ${isShaking ? 'shake-animation' : ''}`}>
             <div className="board-grid w-full h-full gap-1.5">{gameState.grid.map((row, y) => row.map((cell, x) => { const ghost = isGhostCell(x, y); const onLine = !cell && getIsOnBoosterLine(x, y); return (<div key={`${x}-${y}`} className={`relative rounded-lg transition-all duration-300 ${cell ? 'shadow-[0_4px_10px_rgba(0,0,0,0.3)]' : (onLine ? 'bg-slate-700/40' : 'bg-slate-800/30')} ${!cell ? 'border border-white/5' : ''}`} style={{ backgroundColor: cell?.isBooster ? (cell.rainbowTargetColor || '#475569') : (cell?.color || (ghost ? ghost.color : undefined)), opacity: ghost ? (ghost.isValid ? 0.7 : 0.15) : 1, transform: gameState.clearingTiles.includes(cell?.id || '') ? 'scale(0) rotate(90deg)' : (ghost && ghost.isValid ? 'scale(0.95)' : 'scale(1)'), boxShadow: cell ? `inset 0 2px 4px rgba(255,255,255,0.2), 0 4px 8px rgba(0,0,0,0.4)` : 'none', border: cell?.isBooster ? (cell.boosterType === 'group' ? '3px solid #fbbf24' : (cell.boosterType === 'rainbow' ? '3px solid #06b6d4' : '3px solid white')) : undefined }}>{cell?.isBooster && (<div className="absolute inset-0 flex items-center justify-center animate-pulse"><i className={`fa-solid ${cell.boosterType === 'group' ? 'fa-wand-magic-sparkles text-yellow-400' : (cell.boosterType === 'rainbow' ? 'fa-star text-cyan-400' : 'fa-bolt text-white')} text-xs sm:text-lg`}></i></div>)}{cell && (<div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent rounded-lg pointer-events-none" />)}{ghost && !ghost.isValid && (<div className="absolute inset-0 flex items-center justify-center"><div className="w-2 h-2 bg-red-500 rounded-full opacity-60"></div></div>)}</div>); }))}</div>
             {gameState.gameOver && (<div className="absolute inset-0 bg-slate-950/90 backdrop-blur-md rounded-3xl flex flex-col items-center justify-center p-8 text-center z-50"><h2 className="text-4xl font-black mb-1 text-white">GAME OVER</h2><p className="text-slate-400 text-sm mb-8 font-medium">No valid moves left!</p><div className="bg-slate-900 rounded-2xl p-6 w-full mb-8 border border-slate-800"><span className="text-slate-500 text-[10px] uppercase font-bold tracking-widest block mb-2">Final Score</span><span className="text-5xl font-black text-white">{gameState.score}</span></div><button onClick={handleRestart} className="bg-blue-600 hover:bg-blue-500 text-white font-black py-4 px-12 rounded-2xl transition-all active:scale-95">PLAY AGAIN</button></div>)}
+            {gameState.showLevelComplete && (
+              <div className="absolute inset-0 bg-slate-950/95 backdrop-blur-xl rounded-3xl flex flex-col items-center justify-center p-8 text-center z-[100] animate-in fade-in zoom-in duration-300">
+                <div className="mb-2 text-yellow-500 font-black tracking-widest uppercase text-xs">Level {gameState.currentLevel} Clear!</div>
+                <h2 className="text-5xl font-black mb-8 text-white italic tracking-tighter bg-gradient-to-br from-blue-400 via-purple-500 to-pink-500 bg-clip-text text-transparent">FANTASTIC!</h2>
+                
+                <div className="flex gap-4 mb-10 scale-150">
+                  {[1, 2, 3].map(s => (
+                    <div key={s} className={`text-4xl transition-all duration-700 delay-${s * 200} ${gameState.wonStars! >= s ? 'scale-110 opacity-100' : 'scale-75 opacity-20'}`}>
+                      {gameState.wonStars! >= s ? '⭐' : '☆'}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="bg-slate-900 rounded-3xl p-6 w-full mb-10 border border-slate-800 shadow-2xl">
+                  <span className="text-slate-500 text-[10px] uppercase font-bold tracking-widest block mb-2">Stars Earned</span>
+                  <span className="text-5xl font-black text-white">{gameState.wonStars}</span>
+                </div>
+
+                <button 
+                  onClick={collectWin} 
+                  className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-black py-5 px-12 rounded-2xl transition-all active:scale-95 shadow-xl shadow-blue-500/20 text-xl tracking-tight"
+                >
+                  COLLECT
+                </button>
+              </div>
+            )}
           </div>
           {dragPosition && gameState.selectedPieceIndex !== null && (<div className="drag-preview" style={{ left: dragPosition.x, top: dragPosition.y - DRAG_OFFSET_Y }}><PiecePreview piece={gameState.hand[gameState.selectedPieceIndex]!} active={true} size="large" /></div>)}
           <div className="mt-4 flex justify-center"><button onClick={() => setGameState(prev => ({ ...prev, currentLevel: null }))} className="bg-slate-800 hover:bg-slate-700 px-6 py-3 rounded-2xl text-xs font-bold text-slate-300 transition-all active:scale-95 border border-slate-700">BACK TO LEVELS</button></div>

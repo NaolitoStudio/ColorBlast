@@ -39,4 +39,13 @@ export interface GameState {
   combo: number;
   currentLevel: number | null;
   rngSeed: string | null;
+  isWinning?: boolean;
+  showLevelComplete?: boolean;
+  wonStars?: number;
+}
+
+export interface SaveData {
+  unlockedLevel: number;
+  stars: Record<number, number>;
+  totalStars: number;
 }
