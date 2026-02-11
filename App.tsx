@@ -93,6 +93,7 @@ const App: React.FC = () => {
   const [watchingAd, setWatchingAd] = useState(false);
   const [trashingPieceIndex, setTrashingPieceIndex] = useState<number | null>(null);
   const [fadingBoxIndex, setFadingBoxIndex] = useState<{ index: number; fading: boolean } | null>(null);
+  const [fadingInPieces, setFadingInPieces] = useState<boolean>(false);
   const [returningPiece, setReturningPiece] = useState<{
     piece: PieceData;
     fromX: number;
@@ -1034,6 +1035,9 @@ const App: React.FC = () => {
       if (newHand.every(p => p === null)) {
         const validHand = generateValidHand(newGrid, level);
         newHand = validHand;
+        // Trigger fade-in for new pieces
+        setFadingInPieces(true);
+        requestAnimationFrame(() => setFadingInPieces(false));
       }
 
       const matchGroups = findMatchGroups(newGrid);
@@ -1827,6 +1831,7 @@ const App: React.FC = () => {
                   relative transition-opacity duration-300
                   ${piece === null && fadingBoxIndex?.index !== index ? 'opacity-0 pointer-events-none' : ''}
                   ${fadingBoxIndex?.index === index && fadingBoxIndex.fading ? 'opacity-0' : ''}
+                  ${fadingInPieces ? 'opacity-0' : ''}
                   ${trashingPieceIndex === index ? 'piece-trashing' : ''}
                 `}
                 style={{
