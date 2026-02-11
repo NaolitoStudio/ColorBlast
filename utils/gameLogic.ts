@@ -63,6 +63,91 @@ export const createRandomGrid = (fillProbability: number = 0.3, level: number = 
   return grid;
 };
 
+export interface AddedBlock {
+  x: number;
+  y: number;
+  color: Color;
+  id: string;
+}
+
+/**
+ * Check if placing a color at position would make that tile part of a match
+ */
+const wouldTileBeInMatch = (grid: (TileData | null)[][], x: number, y: number, color: Color): boolean => {
+  // Temporarily place the tile
+  const testGrid = grid.map(row => [...row]);
+  testGrid[y][x] = { color, id: 'test' };
+
+  // Check if this tile is part of any match group
+  const matches = findMatchGroups(testGrid);
+
+  // Check if any match group contains this position
+  for (const group of matches) {
+    if (group.some(p => p.x === x && p.y === y)) {
+      return true;
+    }
+  }
+  return false;
+};
+
+/**
+ * Add random blocks to empty cells in the grid
+ * @param grid The current grid
+ * @param count Number of blocks to add
+ * @param level Current level (for color selection)
+ * @param boosterPositions Array of {x, y} positions where boosters exist
+ * @returns Object with modified grid and info about added blocks
+ */
+export const addRandomBlocks = (
+  grid: (TileData | null)[][],
+  count: number,
+  level: number,
+  boosterPositions: Point[] = []
+): { grid: (TileData | null)[][]; addedBlocks: AddedBlock[] } => {
+  const newGrid = grid.map(row => [...row]);
+  const levelColors = getColorsForLevel(level);
+  const config = getLevelConfig(level);
+  const lockedTileChance = config.lockedTileChance ?? 0;
+  const addedBlocks: AddedBlock[] = [];
+
+  // Create a set of booster positions for fast lookup
+  const boosterSet = new Set(boosterPositions.map(p => `${p.x},${p.y}`));
+
+  // Find all empty cells (excluding booster positions)
+  const emptyCells: Point[] = [];
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      if (newGrid[y][x] === null && !boosterSet.has(`${x},${y}`)) {
+        emptyCells.push({ x, y });
+      }
+    }
+  }
+
+  // Shuffle empty cells and pick 'count' of them
+  const shuffled = emptyCells.sort(() => Math.random() - 0.5);
+  const cellsToFill = shuffled.slice(0, Math.min(count, emptyCells.length));
+
+  for (const { x, y } of cellsToFill) {
+    // Find colors that won't make this tile part of a match
+    const safeColors = levelColors.filter(color => !wouldTileBeInMatch(newGrid, x, y, color));
+
+    // If no safe colors, skip this cell
+    if (safeColors.length === 0) continue;
+
+    const color = safeColors[Math.floor(Math.random() * safeColors.length)];
+    const isLocked = lockedTileChance > 0 && Math.random() < lockedTileChance;
+    const id = `added-${x}-${y}-${Date.now()}-${Math.random()}`;
+    newGrid[y][x] = {
+      color,
+      id,
+      ...(isLocked && { locked: true })
+    };
+    addedBlocks.push({ x, y, color, id });
+  }
+
+  return { grid: newGrid, addedBlocks };
+};
+
 /**
  * Check if a piece can be placed anywhere on the grid
  */

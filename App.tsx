@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { GameState, PieceData, Point, Color, LevelObjective, Booster, BoosterType } from './types';
-import { createRandomGrid, generatePiece, generateValidHand, canPlacePiece, findMatchGroups, findGroupCenter, getBombExplosionPoints, isGameOver, calculateScore, initializeObjectives, getAdjacentToMatches } from './utils/gameLogic';
+import { createRandomGrid, generatePiece, generateValidHand, canPlacePiece, findMatchGroups, findGroupCenter, getBombExplosionPoints, isGameOver, calculateScore, initializeObjectives, getAdjacentToMatches, addRandomBlocks, AddedBlock } from './utils/gameLogic';
 import { GRID_SIZE, getLevelConfig } from './constants';
 import { ICONS, UI_ASSETS } from './assets';
 
@@ -48,6 +48,9 @@ interface FloatingText {
 const App: React.FC = () => {
   // Unique ID counter for particles and other elements
   const particleIdCounter = useRef(0);
+
+  // Track tile IDs that are currently flying in (using ref for synchronous access)
+  const flyingTileIds = useRef<Set<string>>(new Set());
 
   const [gameState, setGameState] = useState<GameState>(() => {
     const initialLevel = 1;
@@ -995,6 +998,114 @@ const App: React.FC = () => {
     trashPiece(index);
   };
 
+  // Trigger animation for incoming blocks flying from edges (reuses shuffle animation system)
+  const triggerIncomingBlockAnimation = (addedBlocks: AddedBlock[]) => {
+    if (!boardRef.current) return;
+
+    const boardRect = boardRef.current.getBoundingClientRect();
+    const gridElement = boardRef.current.querySelector('.board-grid');
+    if (!gridElement) return;
+
+    const cellElements = gridElement.children;
+    const cellPositions: { x: number; y: number; width: number }[] = [];
+
+    for (let i = 0; i < cellElements.length; i++) {
+      const cellRect = cellElements[i].getBoundingClientRect();
+      cellPositions.push({
+        x: cellRect.left - boardRect.left,
+        y: cellRect.top - boardRect.top,
+        width: cellRect.width
+      });
+    }
+
+    const boardWidth = boardRect.width;
+    const boardHeight = boardRect.height;
+
+    // Create animations for each added block
+    const animations = addedBlocks.map((block) => {
+      const cellIndex = block.y * GRID_SIZE + block.x;
+      const targetPos = cellPositions[cellIndex];
+      if (!targetPos) return null;
+
+      // Determine which edge to fly from based on position
+      const edges = ['top', 'bottom', 'left', 'right'];
+      let edge: string;
+
+      if (block.y <= 2) edge = 'top';
+      else if (block.y >= GRID_SIZE - 3) edge = 'bottom';
+      else if (block.x <= 2) edge = 'left';
+      else if (block.x >= GRID_SIZE - 3) edge = 'right';
+      else edge = edges[Math.floor(Math.random() * edges.length)];
+
+      // Calculate starting position outside the board
+      let fromX: number, fromY: number;
+
+      switch (edge) {
+        case 'top':
+          fromX = targetPos.x + (Math.random() - 0.5) * 100;
+          fromY = -targetPos.width - 50;
+          break;
+        case 'bottom':
+          fromX = targetPos.x + (Math.random() - 0.5) * 100;
+          fromY = boardHeight + 50;
+          break;
+        case 'left':
+          fromX = -targetPos.width - 50;
+          fromY = targetPos.y + (Math.random() - 0.5) * 100;
+          break;
+        case 'right':
+        default:
+          fromX = boardWidth + 50;
+          fromY = targetPos.y + (Math.random() - 0.5) * 100;
+          break;
+      }
+
+      return {
+        tile: { color: block.color, id: block.id },
+        fromPx: { x: fromX, y: fromY },
+        toPx: { x: targetPos.x, y: targetPos.y },
+        progress: 0,
+        cellSize: targetPos.width
+      };
+    }).filter((a): a is NonNullable<typeof a> => a !== null);
+
+    if (animations.length === 0) return;
+
+    // Set flying IDs synchronously BEFORE any state updates (refs are synchronous)
+    flyingTileIds.current = new Set(addedBlocks.map(b => b.id));
+
+    // Use the same animation system as shuffle
+    setShuffleAnimations(animations);
+
+    // Animate with requestAnimationFrame
+    const animationDuration = 600; // ms
+    const startTime = Date.now();
+
+    const animateFrame = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / animationDuration, 1);
+
+      // Ease out cubic for smooth landing
+      const easedProgress = 1 - Math.pow(1 - progress, 3);
+
+      // Show grid cells well before animation ends to avoid flicker (~10 frames early)
+      if (progress > 0.75 && flyingTileIds.current.size > 0) {
+        flyingTileIds.current.clear();
+      }
+
+      setShuffleAnimations(prev => prev.map(a => ({ ...a, progress: easedProgress })));
+
+      if (progress < 1) {
+        requestAnimationFrame(animateFrame);
+      } else {
+        // Animation complete - clear animations
+        setShuffleAnimations([]);
+      }
+    };
+
+    requestAnimationFrame(animateFrame);
+  };
+
   // Handle shuffle powerup
   const activateShuffle = () => {
     if (shuffleUses <= 0 || shufflePhase || !boardRef.current) return;
@@ -1480,7 +1591,7 @@ const App: React.FC = () => {
   };
 
   const placePieceAt = (x: number, y: number) => {
-    const { selectedPieceIndex, hand, grid, score, combo, level, objectives } = gameState;
+    const { selectedPieceIndex, hand, grid, score, combo, level, objectives, boosters } = gameState;
     const piece = hand[selectedPieceIndex!];
 
     if (piece && canPlacePiece(grid, piece, x, y)) {
@@ -1494,7 +1605,7 @@ const App: React.FC = () => {
         setTimeout(() => setFadingBoxIndex(null), 350);
       }
 
-      const newGrid = grid.map(row => [...row]);
+      let newGrid = grid.map(row => [...row]);
       piece.shape.forEach((point, i) => {
         newGrid[y + point.y][x + point.x] = {
           color: piece.colors[i],
@@ -1505,8 +1616,19 @@ const App: React.FC = () => {
       let newHand = [...hand];
       newHand[selectedPieceIndex!] = null;
 
-      // When all pieces are used, generate new hand (same level)
+      // When all pieces are used, add blocks to grid and generate new hand
       if (newHand.every(p => p === null)) {
+        // Add 4-6 random blocks to the grid (pass booster positions to avoid)
+        const blocksToAdd = 4 + Math.floor(Math.random() * 3);
+        const boosterPositions = boosters.map(b => ({ x: b.x, y: b.y }));
+        const result = addRandomBlocks(newGrid, blocksToAdd, level, boosterPositions);
+        newGrid = result.grid;
+
+        // Trigger flying animation for new blocks
+        if (result.addedBlocks.length > 0 && boardRef.current) {
+          triggerIncomingBlockAnimation(result.addedBlocks);
+        }
+
         const validHand = generateValidHand(newGrid, level);
         newHand = validHand;
         // Trigger fade-in for new pieces
@@ -2072,12 +2194,20 @@ const App: React.FC = () => {
               const cellHasImage = cellColor && isIconPath(cellColor);
               const ghostHasImage = ghostColor && isIconPath(ghostColor);
 
+              // Check if this cell is being animated (flying in) - use ref for synchronous check
+              const isFlying = cell && flyingTileIds.current.has(cell.id);
+
               // Calculate background
               let bgColor = 'transparent'; // empty cell
               let bgImage = `url(${UI_ASSETS.SLOT})`; // empty cells show slot
               let cellOpacity = 0.5; // default for empty slots
 
-              if (booster) {
+              if (isFlying) {
+                // Hide cell while it's flying - show empty slot
+                bgColor = 'transparent';
+                bgImage = `url(${UI_ASSETS.SLOT})`;
+                cellOpacity = 0.5;
+              } else if (booster) {
                 bgColor = 'transparent';
                 // During scrambling, show slot at full opacity; otherwise hide it
                 bgImage = shufflePhase === 'scrambling' ? `url(${UI_ASSETS.SLOT})` : 'none';
