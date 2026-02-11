@@ -1975,20 +1975,30 @@ const App: React.FC = () => {
               let bgImage = `url(${UI_ASSETS.SLOT})`; // empty cells show slot
               let cellOpacity = 0.5; // default for empty slots
 
+              // Get animation progress for slot fade-in during scrambling
+              const animProgress = shuffleAnimations[0]?.progress ?? 0;
+
               if (booster) {
                 bgColor = 'transparent';
-                bgImage = 'none';
-                cellOpacity = 1;
+                // During scrambling, show slot fading in; otherwise hide it
+                bgImage = shufflePhase === 'scrambling' ? `url(${UI_ASSETS.SLOT})` : 'none';
+                cellOpacity = shufflePhase === 'scrambling' ? animProgress * 0.5 : 1;
               } else if (cell) {
-                if (cellHasImage) {
+                if (shufflePhase === 'scrambling') {
+                  // During scrambling, show slot fading in instead of tile
                   bgColor = 'transparent';
-                  bgImage = `url(${cellColor})`;
+                  bgImage = `url(${UI_ASSETS.SLOT})`;
+                  cellOpacity = animProgress * 0.5; // Fade from 0 to 0.5
                 } else {
-                  bgColor = cellColor;
-                  bgImage = 'none';
+                  if (cellHasImage) {
+                    bgColor = 'transparent';
+                    bgImage = `url(${cellColor})`;
+                  } else {
+                    bgColor = cellColor;
+                    bgImage = 'none';
+                  }
+                  cellOpacity = 1;
                 }
-                // Hide cells only during scrambling phase (flying tiles visible)
-                cellOpacity = shufflePhase === 'scrambling' ? 0 : 1;
               } else if (ghost) {
                 if (ghostHasImage) {
                   bgColor = 'transparent';
