@@ -554,7 +554,7 @@ const App: React.FC = () => {
         effectText = '💥 BOOM!';
         bonusMultiplier = 2;
       } else if (booster.type === 'color_ball') {
-        effectText = '🌈 COLOR BLAST!';
+        effectText = '⚡ COLOR BLAST!';
         bonusMultiplier = 3;
       }
 
@@ -809,8 +809,12 @@ const App: React.FC = () => {
 
     if (boardRef.current) {
       const rect = boardRef.current.getBoundingClientRect();
-      const cellSize = rect.width / GRID_SIZE;
-      
+
+      // Account for padding (p-4 = 1rem = 16px in Tailwind)
+      const padding = 16;
+      const gridWidth = rect.width - (padding * 2);
+      const cellSize = gridWidth / GRID_SIZE;
+
       const piece = gameState.hand[gameState.selectedPieceIndex];
       if (!piece) return;
 
@@ -818,18 +822,18 @@ const App: React.FC = () => {
       const visualX = e.clientX;
       const visualY = e.clientY - DRAG_OFFSET_Y;
 
-      // We want the piece's (0,0) tile to be aligned. 
+      // We want the piece's (0,0) tile to be aligned.
       const minX = Math.min(...piece.shape.map(p => p.x));
       const maxX = Math.max(...piece.shape.map(p => p.x));
       const minY = Math.min(...piece.shape.map(p => p.y));
       const maxY = Math.max(...piece.shape.map(p => p.y));
-      
+
       const midX = (minX + maxX) / 2;
       const midY = (minY + maxY) / 2;
 
-      // Target grid coordinates for the anchor (0,0) tile
-      const x = Math.round((visualX - rect.left) / cellSize - midX - 0.5);
-      const y = Math.round((visualY - rect.top) / cellSize - midY - 0.5);
+      // Target grid coordinates for the anchor (0,0) tile, accounting for padding
+      const x = Math.round((visualX - rect.left - padding) / cellSize - midX - 0.5);
+      const y = Math.round((visualY - rect.top - padding) / cellSize - midY - 0.5);
 
       if (x >= -2 && x < GRID_SIZE && y >= -2 && y < GRID_SIZE) {
         setHoveredCell({ x, y });
@@ -1015,7 +1019,7 @@ const App: React.FC = () => {
           boostersToCreate.forEach(booster => {
             const screenX = rect.left + (booster.x * cellSize) + (cellSize / 2);
             const screenY = rect.top + (booster.y * cellSize) + (cellSize / 2);
-            const boosterText = booster.type === 'color_ball' ? '🌈 COLOR!' :
+            const boosterText = booster.type === 'color_ball' ? '⚡ COLOR!' :
                                booster.type === 'bomb' ? '💥 BOMB!' : '💣 LINE!';
             spawnFloatingText(screenX, screenY - 20, boosterText);
           });
@@ -1228,6 +1232,18 @@ const App: React.FC = () => {
         @keyframes adProgress {
           0% { width: 0%; }
           100% { width: 100%; }
+        }
+        @keyframes superballGlow {
+          0%, 100% {
+            filter: drop-shadow(0 0 4px rgba(251, 191, 36, 0.7)) drop-shadow(0 0 8px rgba(251, 191, 36, 0.4));
+          }
+          50% {
+            filter: drop-shadow(0 0 4px rgba(251, 191, 36, 0.85)) drop-shadow(0 0 8px rgba(251, 191, 36, 0.55));
+          }
+        }
+        @keyframes superballPulse {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.03); }
         }
         @keyframes piece-shake {
           0%, 100% { transform: translate(0, 0) rotate(0deg); }
@@ -1463,23 +1479,33 @@ const App: React.FC = () => {
                   {booster && (
                     <div
                       className="absolute inset-0 flex items-center justify-center"
-                      style={{ animation: 'pulse 1s ease-in-out infinite' }}
+                      style={booster.type === 'color_ball' ? {} : { animation: 'pulse 1s ease-in-out infinite' }}
                     >
-                      <div
-                        className="w-[85%] h-[85%] rounded-xl flex items-center justify-center"
-                        style={{
-                          background: booster.type === 'color_ball'
-                            ? 'linear-gradient(135deg, #f97316, #eab308, #22c55e, #3b82f6, #a855f7)'
-                            : booster.type === 'bomb'
-                            ? 'linear-gradient(135deg, #ef4444, #f97316)'
-                            : 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
-                          boxShadow: '0 4px 15px rgba(0,0,0,0.4), inset 0 2px 6px rgba(255,255,255,0.3)'
-                        }}
-                      >
-                        <span className="text-2xl drop-shadow-lg" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.5))' }}>
-                          {booster.type === 'color_ball' ? '🌈' : booster.type === 'bomb' ? '💥' : '💣'}
-                        </span>
-                      </div>
+                      {booster.type === 'color_ball' ? (
+                        <img
+                          src={UI_ASSETS.SUPERBALL}
+                          alt="Superball"
+                          className="w-[85%] h-[85%] object-contain"
+                          style={{
+                            filter: 'drop-shadow(0 0 4px rgba(251, 191, 36, 0.8)) drop-shadow(0 0 8px rgba(251, 191, 36, 0.5))',
+                            animation: 'superballGlow 2s ease-in-out infinite, superballPulse 2s ease-in-out infinite'
+                          }}
+                        />
+                      ) : (
+                        <div
+                          className="w-[85%] h-[85%] rounded-xl flex items-center justify-center"
+                          style={{
+                            background: booster.type === 'bomb'
+                              ? 'linear-gradient(135deg, #ef4444, #f97316)'
+                              : 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+                            boxShadow: '0 4px 15px rgba(0,0,0,0.4), inset 0 2px 6px rgba(255,255,255,0.3)'
+                          }}
+                        >
+                          <span className="text-2xl drop-shadow-lg" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.5))' }}>
+                            {booster.type === 'bomb' ? '💥' : '💣'}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   )}
                   {ghost && !ghost.isValid && (
