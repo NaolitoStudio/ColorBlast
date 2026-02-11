@@ -71,6 +71,7 @@ const App: React.FC = () => {
 
   const [hoveredCell, setHoveredCell] = useState<Point | null>(null);
   const [dragPosition, setDragPosition] = useState<{ x: number, y: number } | null>(null);
+  const [dragCellSize, setDragCellSize] = useState<number>(40);
   
   // Effects State
   const [particles, setParticles] = useState<Particle[]>([]);
@@ -779,6 +780,15 @@ const App: React.FC = () => {
 
   const startDragging = (e: React.PointerEvent, index: number) => {
     if (gameState.hand[index] === null || gameState.gameOver || celebrating || showLevelPopup || showAllClear || trashingPieceIndex !== null) return;
+
+    // Calculate cell size based on actual board dimensions
+    if (boardRef.current) {
+      const rect = boardRef.current.getBoundingClientRect();
+      const padding = 16; // p-4 = 1rem = 16px
+      const gridWidth = rect.width - (padding * 2);
+      const cellSize = gridWidth / GRID_SIZE;
+      setDragCellSize(cellSize);
+    }
 
     setGameState(prev => ({ ...prev, selectedPieceIndex: index }));
     setDragPosition({ x: e.clientX, y: e.clientY });
@@ -1587,7 +1597,7 @@ const App: React.FC = () => {
             top: dragPosition.y - DRAG_OFFSET_Y 
           }}
         >
-          <PiecePreview piece={gameState.hand[gameState.selectedPieceIndex]!} active={true} size="large" />
+          <PiecePreview piece={gameState.hand[gameState.selectedPieceIndex]!} active={true} cellSize={dragCellSize} />
         </div>
       )}
 
@@ -1712,17 +1722,20 @@ const App: React.FC = () => {
   );
 };
 
-const PiecePreview: React.FC<{ piece: PieceData, active: boolean, size?: 'small' | 'large' }> = ({ piece, active, size = 'small' }) => {
+const PiecePreview: React.FC<{ piece: PieceData, active: boolean, size?: 'small' | 'large', cellSize?: number }> = ({ piece, active, size = 'small', cellSize }) => {
   const minX = Math.min(...piece.shape.map(p => p.x));
   const maxX = Math.max(...piece.shape.map(p => p.x));
   const minY = Math.min(...piece.shape.map(p => p.y));
   const maxY = Math.max(...piece.shape.map(p => p.y));
-  
+
   const width = maxX - minX + 1;
   const height = maxY - minY + 1;
 
-  const boxSize = size === 'large' ? 'w-10 h-10' : 'w-3.5 h-3.5 sm:w-5 sm:h-5';
-  
+  // Use dynamic cellSize if provided, otherwise fall back to Tailwind classes
+  const useDynamicSize = cellSize !== undefined;
+  const boxSize = useDynamicSize ? '' : (size === 'large' ? 'w-10 h-10' : 'w-3.5 h-3.5 sm:w-5 sm:h-5');
+  const boxStyle = useDynamicSize ? { width: `${cellSize}px`, height: `${cellSize}px` } : {};
+
   return (
     <div
       className="piece-preview-grid gap-0.5"
@@ -1739,7 +1752,7 @@ const PiecePreview: React.FC<{ piece: PieceData, active: boolean, size?: 'small'
         const y = minY + Math.floor(i / width);
         const indexInShape = piece.shape.findIndex(p => p.x === x && p.y === y);
         const inShape = indexInShape !== -1;
-        
+
         const color = inShape ? piece.colors[indexInShape] : undefined;
         const hasImage = color && isIconPath(color);
 
@@ -1748,6 +1761,7 @@ const PiecePreview: React.FC<{ piece: PieceData, active: boolean, size?: 'small'
             key={i}
             className={`${boxSize} transition-all duration-200 ${inShape ? '' : 'bg-transparent'}`}
             style={{
+              ...boxStyle,
               backgroundColor: hasImage ? 'transparent' : (inShape ? color : 'transparent'),
               backgroundImage: hasImage ? `url(${color})` : 'none',
               backgroundSize: '100% 100%',
