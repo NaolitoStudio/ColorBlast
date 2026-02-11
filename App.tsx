@@ -953,7 +953,7 @@ const App: React.FC = () => {
 
   // Perform the shuffle using pre-captured cell positions (before transforms)
   const performShuffle = (cellPositions: { x: number; y: number; width: number }[]) => {
-    const { grid } = gameState;
+    const { grid, boosters } = gameState;
 
     // Collect all tiles with their original positions
     const originalTiles: { tile: { color: Color; id: string }; gridX: number; gridY: number; pxPos: { x: number; y: number }; cellSize: number }[] = [];
@@ -973,28 +973,47 @@ const App: React.FC = () => {
       }
     }
 
-    if (originalTiles.length < 2) return;
+    // Collect all boosters with their original positions
+    const originalBoosters: { booster: Booster; pxPos: { x: number; y: number }; cellSize: number }[] = [];
+    boosters.forEach(b => {
+      const cellIndex = b.y * GRID_SIZE + b.x;
+      const pos = cellPositions[cellIndex];
+      originalBoosters.push({
+        booster: { ...b },
+        pxPos: { x: pos.x, y: pos.y },
+        cellSize: pos.width
+      });
+    });
 
-    // Create a copy of grid positions for shuffling
-    const gridPositions = originalTiles.map(t => ({ x: t.gridX, y: t.gridY }));
+    const totalItems = originalTiles.length + originalBoosters.length;
+    if (totalItems < 2) return;
+
+    // Get ALL available positions (entire grid)
+    const allAvailablePositions: { x: number; y: number }[] = [];
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        allAvailablePositions.push({ x, y });
+      }
+    }
 
     // Try shuffling until we get 1-3 matches (max 50 attempts)
-    let shuffledGridPositions: { x: number; y: number }[] = [];
+    let shuffledTilePositions: { x: number; y: number }[] = [];
+    let shuffledBoosterPositions: { x: number; y: number }[] = [];
     let matchCount = 0;
     let attempts = 0;
 
     do {
-      // Fisher-Yates shuffle on positions
-      shuffledGridPositions = [...gridPositions];
-      for (let i = shuffledGridPositions.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [shuffledGridPositions[i], shuffledGridPositions[j]] = [shuffledGridPositions[j], shuffledGridPositions[i]];
-      }
+      // Shuffle ALL available positions
+      const shuffledPositions = [...allAvailablePositions].sort(() => Math.random() - 0.5);
 
-      // Create test grid to check matches
+      // First N positions go to boosters, rest go to tiles
+      shuffledBoosterPositions = shuffledPositions.slice(0, originalBoosters.length);
+      shuffledTilePositions = shuffledPositions.slice(originalBoosters.length, originalBoosters.length + originalTiles.length);
+
+      // Create test grid to check matches (only tiles matter for matches)
       const testGrid: (typeof grid[0][0])[][] = Array(GRID_SIZE).fill(null).map(() => Array(GRID_SIZE).fill(null));
       originalTiles.forEach((t, i) => {
-        const newPos = shuffledGridPositions[i];
+        const newPos = shuffledTilePositions[i];
         testGrid[newPos.y][newPos.x] = { color: t.tile.color, id: t.tile.id };
       });
 
@@ -1003,7 +1022,7 @@ const App: React.FC = () => {
       attempts++;
     } while ((matchCount < 1 || matchCount > 3) && attempts < 50);
 
-    // If no matches found after 50 attempts, force create one
+    // If no matches found after 50 attempts, try to cluster tiles or force a match
     if (matchCount === 0) {
       // Group tiles by color
       const colorGroups: Map<Color, number[]> = new Map();
@@ -1013,73 +1032,85 @@ const App: React.FC = () => {
         colorGroups.get(color)!.push(i);
       });
 
-      // Find a color with at least 3 tiles
-      let targetColor: Color | null = null;
-      let targetIndices: number[] = [];
+      // Find the color with most tiles
+      let bestColor: Color | null = null;
+      let bestIndices: number[] = [];
       for (const [color, indices] of colorGroups) {
-        if (indices.length >= 3) {
-          targetColor = color;
-          targetIndices = indices.slice(0, 3);
-          break;
+        if (indices.length > bestIndices.length) {
+          bestColor = color;
+          bestIndices = indices;
         }
       }
 
-      // If we have 3+ tiles of same color, force them adjacent
-      if (targetColor && targetIndices.length >= 3) {
-        // Try to find a horizontal or vertical line of 3 positions
-        let adjacentPositions: { x: number; y: number }[] = [];
+      // Create set of booster positions to avoid
+      const boosterPosSet = new Set(shuffledBoosterPositions.map(p => `${p.x},${p.y}`));
 
-        // First, try to use existing positions and swap to make them adjacent
-        const pos0 = shuffledGridPositions[targetIndices[0]];
+      // Try to cluster tiles of the same color together
+      if (bestColor && bestIndices.length >= 2) {
+        // Find a good center position (middle of the grid)
+        const centerX = Math.floor(GRID_SIZE / 2);
+        const centerY = Math.floor(GRID_SIZE / 2);
 
-        // Look for 2 adjacent positions to pos0
-        const neighbors = [
-          [{ x: pos0.x + 1, y: pos0.y }, { x: pos0.x + 2, y: pos0.y }], // right
-          [{ x: pos0.x - 1, y: pos0.y }, { x: pos0.x - 2, y: pos0.y }], // left
-          [{ x: pos0.x, y: pos0.y + 1 }, { x: pos0.x, y: pos0.y + 2 }], // down
-          [{ x: pos0.x, y: pos0.y - 1 }, { x: pos0.x, y: pos0.y - 2 }], // up
-        ];
+        // Get positions near center, sorted by distance (excluding booster positions)
+        const positionsByDistance = allAvailablePositions
+          .filter(p => !boosterPosSet.has(`${p.x},${p.y}`))
+          .map(p => ({ ...p, dist: Math.abs(p.x - centerX) + Math.abs(p.y - centerY) }))
+          .sort((a, b) => a.dist - b.dist);
 
-        for (const [n1, n2] of neighbors) {
-          if (n1.x >= 0 && n1.x < GRID_SIZE && n1.y >= 0 && n1.y < GRID_SIZE &&
-              n2.x >= 0 && n2.x < GRID_SIZE && n2.y >= 0 && n2.y < GRID_SIZE) {
-            adjacentPositions = [pos0, n1, n2];
-            break;
+        // If we have 3+ of same color, place them adjacent for a match
+        if (bestIndices.length >= 3) {
+          // Find 3 adjacent positions near center
+          let foundMatch = false;
+          for (const startPos of positionsByDistance) {
+            const directions = [
+              [{ x: startPos.x, y: startPos.y }, { x: startPos.x + 1, y: startPos.y }, { x: startPos.x + 2, y: startPos.y }],
+              [{ x: startPos.x, y: startPos.y }, { x: startPos.x, y: startPos.y + 1 }, { x: startPos.x, y: startPos.y + 2 }],
+              [{ x: startPos.x, y: startPos.y }, { x: startPos.x + 1, y: startPos.y }, { x: startPos.x, y: startPos.y + 1 }],
+            ];
+
+            for (const positions of directions) {
+              const allValid = positions.every(p =>
+                p.x >= 0 && p.x < GRID_SIZE && p.y >= 0 && p.y < GRID_SIZE &&
+                !boosterPosSet.has(`${p.x},${p.y}`)
+              );
+
+              if (allValid) {
+                // Place the 3 same-color tiles at these positions
+                const usedPositions = new Set<string>();
+                for (let i = 0; i < 3; i++) {
+                  shuffledTilePositions[bestIndices[i]] = positions[i];
+                  usedPositions.add(`${positions[i].x},${positions[i].y}`);
+                }
+
+                // Redistribute other tiles to remaining positions
+                const remainingPositions = allAvailablePositions
+                  .filter(p => !usedPositions.has(`${p.x},${p.y}`) && !boosterPosSet.has(`${p.x},${p.y}`))
+                  .sort(() => Math.random() - 0.5);
+
+                let posIdx = 0;
+                for (let i = 0; i < originalTiles.length; i++) {
+                  if (!bestIndices.slice(0, 3).includes(i)) {
+                    shuffledTilePositions[i] = remainingPositions[posIdx++];
+                  }
+                }
+                foundMatch = true;
+                break;
+              }
+            }
+            if (foundMatch) break;
           }
-        }
-
-        if (adjacentPositions.length === 3) {
-          // Move our 3 same-color tiles to adjacent positions
-          // Find which tiles are currently assigned to those adjacent positions
-          const idx1 = shuffledGridPositions.findIndex(p => p.x === adjacentPositions[1].x && p.y === adjacentPositions[1].y);
-          const idx2 = shuffledGridPositions.findIndex(p => p.x === adjacentPositions[2].x && p.y === adjacentPositions[2].y);
-
-          // Swap tile at targetIndices[1] with tile at adjacentPositions[1]
-          if (idx1 !== -1 && idx1 !== targetIndices[1]) {
-            const temp = shuffledGridPositions[targetIndices[1]];
-            shuffledGridPositions[targetIndices[1]] = adjacentPositions[1];
-            shuffledGridPositions[idx1] = temp;
-          } else if (idx1 === -1) {
-            // Position is empty, just assign directly
-            shuffledGridPositions[targetIndices[1]] = adjacentPositions[1];
-          }
-
-          // Swap tile at targetIndices[2] with tile at adjacentPositions[2]
-          const newIdx2 = shuffledGridPositions.findIndex(p => p.x === adjacentPositions[2].x && p.y === adjacentPositions[2].y);
-          if (newIdx2 !== -1 && newIdx2 !== targetIndices[2]) {
-            const temp = shuffledGridPositions[targetIndices[2]];
-            shuffledGridPositions[targetIndices[2]] = adjacentPositions[2];
-            shuffledGridPositions[newIdx2] = temp;
-          } else if (newIdx2 === -1) {
-            shuffledGridPositions[targetIndices[2]] = adjacentPositions[2];
+        } else {
+          // Less than 3 of any color - just cluster all tiles near center
+          for (let i = 0; i < originalTiles.length; i++) {
+            shuffledTilePositions[i] = positionsByDistance[i];
           }
         }
       }
     }
 
-    // Create animation data with PIXEL positions read from DOM
-    const animations = originalTiles.map((t, i) => {
-      const targetGridPos = shuffledGridPositions[i];
+    // Create animation data with PIXEL positions read from DOM (tiles)
+    const tileAnimations = originalTiles.map((t, i) => {
+      const targetGridPos = shuffledTilePositions[i];
       const targetCellIndex = targetGridPos.y * GRID_SIZE + targetGridPos.x;
       const targetPxPos = cellPositions[targetCellIndex];
 
@@ -1088,10 +1119,29 @@ const App: React.FC = () => {
         fromPx: t.pxPos,
         toPx: { x: targetPxPos.x, y: targetPxPos.y },
         progress: 0,
-        cellSize: t.cellSize
+        cellSize: t.cellSize,
+        isBooster: false as const
       };
     });
 
+    // Create animation data for boosters
+    const boosterAnimations = originalBoosters.map((b, i) => {
+      const targetGridPos = shuffledBoosterPositions[i];
+      const targetCellIndex = targetGridPos.y * GRID_SIZE + targetGridPos.x;
+      const targetPxPos = cellPositions[targetCellIndex];
+
+      return {
+        tile: { color: b.booster.color, id: b.booster.id },
+        fromPx: b.pxPos,
+        toPx: { x: targetPxPos.x, y: targetPxPos.y },
+        progress: 0,
+        cellSize: b.cellSize,
+        isBooster: true as const,
+        boosterType: b.booster.type
+      };
+    });
+
+    const animations = [...tileAnimations, ...boosterAnimations];
     setShuffleAnimations(animations);
 
     // Start animation loop
@@ -1110,15 +1160,21 @@ const App: React.FC = () => {
       if (progress < 1) {
         requestAnimationFrame(animateFrame);
       } else {
-        // Animation complete - update grid and transition to landing
+        // Animation complete - update grid and boosters, then transition to landing
         const newGrid: (typeof grid[0][0])[][] = Array(GRID_SIZE).fill(null).map(() => Array(GRID_SIZE).fill(null));
         originalTiles.forEach((t, i) => {
-          const newPos = shuffledGridPositions[i];
+          const newPos = shuffledTilePositions[i];
           newGrid[newPos.y][newPos.x] = { color: t.tile.color, id: `shuffle-${Date.now()}-${i}` };
         });
 
-        // Update grid, remove flying tiles and transition to landing
-        setGameState(prev => ({ ...prev, grid: newGrid }));
+        // Update booster positions
+        const newBoosters = originalBoosters.map((b, i) => {
+          const newPos = shuffledBoosterPositions[i];
+          return { ...b.booster, x: newPos.x, y: newPos.y };
+        });
+
+        // Update grid and boosters, remove flying tiles and transition to landing
+        setGameState(prev => ({ ...prev, grid: newGrid, boosters: newBoosters }));
         setShuffleAnimations([]);
         setShufflePhase('landing');
 
@@ -2080,6 +2136,67 @@ const App: React.FC = () => {
               const currentX = anim.fromPx.x + dx * moveProgress;
               const currentY = anim.fromPx.y + dy * moveProgress - arcOffset;
 
+              const boxShadowStyle = moveProgress < 0.7
+                ? '0 6px 20px rgba(0,0,0,0.4)'
+                : `0 ${6 - 2 * ((moveProgress - 0.7) / 0.3)}px ${20 - 12 * ((moveProgress - 0.7) / 0.3)}px rgba(0,0,0,${0.4 - 0.1 * ((moveProgress - 0.7) / 0.3)})`;
+
+              // Render booster differently
+              if ((anim as any).isBooster) {
+                const boosterType = (anim as any).boosterType;
+                return (
+                  <div
+                    key={`fly-booster-${anim.tile.id}-${i}`}
+                    className="absolute flex items-center justify-center"
+                    style={{
+                      width: anim.cellSize,
+                      height: anim.cellSize,
+                      left: currentX,
+                      top: currentY,
+                      boxShadow: boxShadowStyle,
+                      zIndex: 40
+                    }}
+                  >
+                    {boosterType === 'color_ball' ? (
+                      <img
+                        src={UI_ASSETS.SUPERBALL}
+                        alt="Superball"
+                        className="w-[85%] h-[85%] object-contain"
+                        style={{
+                          filter: 'drop-shadow(0 0 4px rgba(251, 191, 36, 0.8)) drop-shadow(0 0 8px rgba(251, 191, 36, 0.5))'
+                        }}
+                      />
+                    ) : (
+                      <div
+                        className="w-[85%] h-[85%] rounded-xl flex items-center justify-center"
+                        style={{
+                          background: boosterType === 'bomb'
+                            ? 'linear-gradient(135deg, #ef4444, #f97316)'
+                            : boosterType === 'line_bomb'
+                            ? 'linear-gradient(135deg, #3b82f6, #8b5cf6)'
+                            : boosterType === 'rocket_h'
+                            ? 'linear-gradient(135deg, #22c55e, #16a34a)'
+                            : boosterType === 'rocket_v'
+                            ? 'linear-gradient(135deg, #06b6d4, #0891b2)'
+                            : 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+                          boxShadow: '0 4px 15px rgba(0,0,0,0.4), inset 0 2px 6px rgba(255,255,255,0.3)'
+                        }}
+                      >
+                        <span
+                          className="text-2xl drop-shadow-lg"
+                          style={{
+                            filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.5))',
+                            transform: boosterType === 'rocket_h' ? 'rotate(45deg)' : boosterType === 'rocket_v' ? 'rotate(-45deg)' : 'none'
+                          }}
+                        >
+                          {boosterType === 'bomb' ? '💥' : boosterType === 'line_bomb' ? '💣' : (boosterType === 'rocket_h' || boosterType === 'rocket_v') ? '🚀' : '💣'}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+
+              // Render regular tile
               return (
                 <div
                   key={`fly-${anim.tile.id}-${i}`}
@@ -2094,9 +2211,7 @@ const App: React.FC = () => {
                     backgroundSize: '100% 100%',
                     backgroundPosition: 'center',
                     backgroundRepeat: 'no-repeat',
-                    boxShadow: moveProgress < 0.7
-                      ? '0 6px 20px rgba(0,0,0,0.4)'
-                      : `0 ${6 - 2 * ((moveProgress - 0.7) / 0.3)}px ${20 - 12 * ((moveProgress - 0.7) / 0.3)}px rgba(0,0,0,${0.4 - 0.1 * ((moveProgress - 0.7) / 0.3)})`,
+                    boxShadow: boxShadowStyle,
                     zIndex: 40
                   }}
                 />
