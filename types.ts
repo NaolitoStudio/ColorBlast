@@ -1,11 +1,11 @@
+import { ICONS } from './assets';
 
 export enum Color {
-  RED = '#ef4444',
-  BLUE = '#3b82f6',
-  GREEN = '#22c55e',
-  YELLOW = '#eab308',
-  PURPLE = '#a855f7',
-  ORANGE = '#f97316',
+  BLUE = ICONS.BLUE,
+  GREEN = ICONS.GREEN,
+  PURPLE = ICONS.PURPLE,
+  YELLOW = ICONS.YELLOW,
+  ORANGE = ICONS.ORANGE,
   EMPTY = 'transparent'
 }
 

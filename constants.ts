@@ -14,10 +14,9 @@ export const SHAPES: Point[][] = [
 ];
 
 export const COLORS = [
-  Color.RED,
   Color.BLUE,
   Color.GREEN,
-  Color.YELLOW,
   Color.PURPLE,
+  Color.YELLOW,
   Color.ORANGE
 ];

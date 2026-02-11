@@ -6,6 +6,16 @@ import { GRID_SIZE } from './constants';
 
 const DRAG_OFFSET_Y = 100; // How much the piece is lifted above the finger/cursor
 
+// Helper to get particle color from icon path
+const getParticleColor = (iconPath: string): string => {
+  if (iconPath.includes('Layer-1')) return '#3b82f6'; // Blue
+  if (iconPath.includes('Layer-2')) return '#22c55e'; // Green
+  if (iconPath.includes('Layer-3')) return '#a855f7'; // Purple
+  if (iconPath.includes('Layer-4')) return '#eab308'; // Yellow
+  if (iconPath.includes('Layer-5')) return '#f97316'; // Orange
+  return '#888888'; // Fallback
+};
+
 interface Particle {
   id: number;
   x: number;
@@ -248,7 +258,8 @@ const App: React.FC = () => {
           allClearedPoints.forEach(p => {
             const cellCenterX = rect.left + (p.x * cellSize) + (cellSize / 2);
             const cellCenterY = rect.top + (p.y * cellSize) + (cellSize / 2);
-            const color = newGrid[p.y][p.x]!.color;
+            const iconPath = newGrid[p.y][p.x]!.color;
+            const color = getParticleColor(iconPath);
             spawnParticles(cellCenterX, cellCenterY, color, 6);
           });
 
@@ -440,27 +451,37 @@ const App: React.FC = () => {
         className={`relative aspect-square bg-slate-900 rounded-3xl p-1.5 shadow-2xl border border-slate-800 ${isShaking ? 'shake-animation' : ''}`}
       >
         <div className="board-grid w-full h-full gap-1.5">
-          {gameState.grid.map((row, y) => 
+          {gameState.grid.map((row, y) =>
             row.map((cell, x) => {
               const ghost = isGhostCell(x, y);
               return (
-                <div 
+                <div
                   key={`${x}-${y}`}
                   className={`
-                    relative rounded-lg transition-all duration-300
+                    relative rounded-lg transition-all duration-300 overflow-hidden
                     ${cell ? 'shadow-[0_4px_10px_rgba(0,0,0,0.3)]' : 'bg-slate-800/30 border border-white/5'}
                   `}
-                  style={{ 
-                    backgroundColor: cell?.color || (ghost ? ghost.color : 'rgba(30, 41, 59, 0.3)'),
+                  style={{
                     opacity: ghost ? (ghost.isValid ? 0.7 : 0.15) : 1,
-                    transform: gameState.clearingTiles.includes(cell?.id || '') 
-                      ? 'scale(0) rotate(90deg)' 
-                      : (ghost && ghost.isValid ? 'scale(0.95)' : 'scale(1)'),
-                    boxShadow: cell ? `inset 0 2px 4px rgba(255,255,255,0.2), 0 4px 8px rgba(0,0,0,0.4)` : 'none'
+                    transform: gameState.clearingTiles.includes(cell?.id || '')
+                      ? 'scale(0) rotate(90deg)'
+                      : (ghost && ghost.isValid ? 'scale(0.95)' : 'scale(1)')
                   }}
                 >
                   {cell && (
-                    <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent rounded-lg pointer-events-none" />
+                    <img
+                      src={cell.color}
+                      alt="tile"
+                      className="w-full h-full object-cover pointer-events-none"
+                    />
+                  )}
+                  {ghost && (
+                    <img
+                      src={ghost.color}
+                      alt="ghost"
+                      className="w-full h-full object-cover pointer-events-none"
+                      style={{ opacity: ghost.isValid ? 0.7 : 0.3 }}
+                    />
                   )}
                   {ghost && !ghost.isValid && (
                     <div className="absolute inset-0 flex items-center justify-center">
@@ -563,16 +584,20 @@ const PiecePreview: React.FC<{ piece: PieceData, active: boolean, size?: 'small'
         const y = minY + Math.floor(i / width);
         const indexInShape = piece.shape.findIndex(p => p.x === x && p.y === y);
         const inShape = indexInShape !== -1;
-        
+
         return (
-          <div 
+          <div
             key={i}
-            className={`${boxSize} rounded-lg transition-all duration-200 ${inShape ? 'shadow-md' : 'bg-transparent'}`}
-            style={{ 
-              backgroundColor: inShape ? piece.colors[indexInShape] : 'transparent',
-              boxShadow: inShape ? 'inset 0 1px 3px rgba(255,255,255,0.4), 0 2px 4px rgba(0,0,0,0.3)' : 'none'
-            }}
-          />
+            className={`${boxSize} rounded-lg transition-all duration-200 overflow-hidden ${inShape ? 'shadow-md' : 'bg-transparent'}`}
+          >
+            {inShape && (
+              <img
+                src={piece.colors[indexInShape]}
+                alt="piece"
+                className="w-full h-full object-cover"
+              />
+            )}
+          </div>
         );
       })}
     </div>
