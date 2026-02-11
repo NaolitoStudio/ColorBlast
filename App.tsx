@@ -343,8 +343,8 @@ const App: React.FC = () => {
       <style>{`
         .board-grid {
           display: grid;
-          grid-template-columns: repeat(8, 1fr);
-          grid-template-rows: repeat(8, 1fr);
+          grid-template-columns: repeat(8, minmax(0, 1fr));
+          grid-template-rows: repeat(8, minmax(0, 1fr));
         }
         .piece-preview-grid {
           display: grid;
@@ -449,6 +449,12 @@ const App: React.FC = () => {
       <div 
         ref={boardRef}
         className={`relative aspect-square bg-slate-900 rounded-3xl p-1.5 shadow-2xl border border-slate-800 ${isShaking ? 'shake-animation' : ''}`}
+        style={{
+          aspectRatio: '1 / 1',
+          width: '100%',
+          maxWidth: '100%',
+          flexShrink: 0
+        }}
       >
         <div className="board-grid w-full h-full gap-1.5">
           {gameState.grid.map((row, y) =>
@@ -458,7 +464,7 @@ const App: React.FC = () => {
                 <div
                   key={`${x}-${y}`}
                   className={`
-                    relative rounded-lg transition-all duration-300 overflow-hidden
+                    relative min-w-0 min-h-0 rounded-lg transition-all duration-300 overflow-hidden
                     ${cell ? 'shadow-[0_4px_10px_rgba(0,0,0,0.3)]' : 'bg-slate-800/30 border border-white/5'}
                   `}
                   style={{
@@ -472,14 +478,14 @@ const App: React.FC = () => {
                     <img
                       src={cell.color}
                       alt="tile"
-                      className="w-full h-full object-cover pointer-events-none"
+                      className="absolute inset-0 w-full h-full object-cover pointer-events-none"
                     />
                   )}
                   {ghost && (
                     <img
                       src={ghost.color}
                       alt="ghost"
-                      className="w-full h-full object-cover pointer-events-none"
+                      className="absolute inset-0 w-full h-full object-cover pointer-events-none"
                       style={{ opacity: ghost.isValid ? 0.7 : 0.3 }}
                     />
                   )}
