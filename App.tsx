@@ -72,6 +72,8 @@ const App: React.FC = () => {
   const [hoveredCell, setHoveredCell] = useState<Point | null>(null);
   const [dragPosition, setDragPosition] = useState<{ x: number, y: number } | null>(null);
   const [dragCellSize, setDragCellSize] = useState<number>(40);
+  const [dragVelocity, setDragVelocity] = useState<{ x: number, y: number }>({ x: 0, y: 0 });
+  const lastDragPos = useRef<{ x: number, y: number, time: number } | null>(null);
   
   // Effects State
   const [particles, setParticles] = useState<Particle[]>([]);
@@ -792,12 +794,23 @@ const App: React.FC = () => {
 
     setGameState(prev => ({ ...prev, selectedPieceIndex: index }));
     setDragPosition({ x: e.clientX, y: e.clientY });
+    setDragVelocity({ x: 0, y: 0 });
+    lastDragPos.current = { x: e.clientX, y: e.clientY, time: Date.now() };
 
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
     if (gameState.selectedPieceIndex === null || gameState.gameOver) return;
+
+    // Calculate velocity for jelly effect - use raw delta, more responsive
+    if (lastDragPos.current) {
+      const dx = e.clientX - lastDragPos.current.x;
+      const dy = e.clientY - lastDragPos.current.y;
+      // Direct velocity from movement delta
+      setDragVelocity({ x: dx, y: dy });
+    }
+    lastDragPos.current = { x: e.clientX, y: e.clientY, time: Date.now() };
 
     setDragPosition({ x: e.clientX, y: e.clientY });
 
@@ -867,6 +880,8 @@ const App: React.FC = () => {
     setDragPosition(null);
     setHoveredCell(null);
     setHoveredPowerup(null);
+    setDragVelocity({ x: 0, y: 0 });
+    lastDragPos.current = null;
   };
 
   const placePieceAt = (x: number, y: number) => {
@@ -1583,7 +1598,7 @@ const App: React.FC = () => {
             top: dragPosition.y - DRAG_OFFSET_Y 
           }}
         >
-          <PiecePreview piece={gameState.hand[gameState.selectedPieceIndex]!} active={true} cellSize={dragCellSize} />
+          <PiecePreview piece={gameState.hand[gameState.selectedPieceIndex]!} active={true} cellSize={dragCellSize} velocity={dragVelocity} />
         </div>
       )}
 
@@ -1708,7 +1723,7 @@ const App: React.FC = () => {
   );
 };
 
-const PiecePreview: React.FC<{ piece: PieceData, active: boolean, cellSize?: number, containerSize?: number }> = ({ piece, active, cellSize, containerSize }) => {
+const PiecePreview: React.FC<{ piece: PieceData, active: boolean, cellSize?: number, containerSize?: number, velocity?: { x: number, y: number } }> = ({ piece, active, cellSize, containerSize, velocity }) => {
   const minX = Math.min(...piece.shape.map(p => p.x));
   const maxX = Math.max(...piece.shape.map(p => p.x));
   const minY = Math.min(...piece.shape.map(p => p.y));
@@ -1716,6 +1731,10 @@ const PiecePreview: React.FC<{ piece: PieceData, active: boolean, cellSize?: num
 
   const width = maxX - minX + 1;
   const height = maxY - minY + 1;
+
+  // Center of the piece for jelly effect calculation
+  const centerX = (minX + maxX) / 2;
+  const centerY = (minY + maxY) / 2;
 
   // Calculate optimal cell size based on piece dimensions and container
   let finalCellSize: number;
@@ -1734,6 +1753,22 @@ const PiecePreview: React.FC<{ piece: PieceData, active: boolean, cellSize?: num
     finalCellSize = 20;
   }
 
+  // Squash & stretch for the whole piece based on velocity
+  let containerTransform = '';
+  if (velocity) {
+    const speed = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
+    const stretchAmount = Math.min(speed * 0.015, 0.25); // Cap the stretch
+
+    if (speed > 1) {
+      const vxNorm = velocity.x / speed;
+      const vyNorm = velocity.y / speed;
+      // Stretch along velocity, squash perpendicular
+      const scaleX = 1 + stretchAmount * Math.abs(vxNorm) - stretchAmount * 0.5 * Math.abs(vyNorm);
+      const scaleY = 1 + stretchAmount * Math.abs(vyNorm) - stretchAmount * 0.5 * Math.abs(vxNorm);
+      containerTransform = `scale(${scaleX}, ${scaleY})`;
+    }
+  }
+
   return (
     <div
       className="piece-preview-grid gap-0.5"
@@ -1742,7 +1777,9 @@ const PiecePreview: React.FC<{ piece: PieceData, active: boolean, cellSize?: num
         gridTemplateRows: `repeat(${height}, 1fr)`,
         width: 'auto',
         maxHeight: '100%',
-        maxWidth: '100%'
+        maxWidth: '100%',
+        transform: containerTransform,
+        transition: 'transform 0.08s ease-out'
       }}
     >
       {Array.from({ length: width * height }).map((_, i) => {
@@ -1754,10 +1791,23 @@ const PiecePreview: React.FC<{ piece: PieceData, active: boolean, cellSize?: num
         const color = inShape ? piece.colors[indexInShape] : undefined;
         const hasImage = color && isIconPath(color);
 
+        // Jelly effect: cells behind in movement direction lag, cells ahead lead
+        let jellyTransform = '';
+        if (velocity && inShape) {
+          const relX = x - centerX;
+          const relY = y - centerY;
+          // Project cell position onto velocity direction
+          // Cells "behind" (negative projection) lag, cells "ahead" (positive) lead
+          const factor = 0; // Disabled for testing squash & stretch
+          // Moving right (vx>0): right cells (relX>0) go ahead, left cells (relX<0) lag
+          const offsetX = relX * velocity.x * factor;
+          const offsetY = relY * velocity.y * factor;
+          jellyTransform = `translate(${offsetX}px, ${offsetY}px)`;
+        }
+
         return (
           <div
             key={i}
-            className="transition-all duration-200"
             style={{
               width: `${finalCellSize}px`,
               height: `${finalCellSize}px`,
@@ -1765,7 +1815,9 @@ const PiecePreview: React.FC<{ piece: PieceData, active: boolean, cellSize?: num
               backgroundImage: hasImage ? `url(${color})` : 'none',
               backgroundSize: '100% 100%',
               backgroundPosition: 'center',
-              backgroundRepeat: 'no-repeat'
+              backgroundRepeat: 'no-repeat',
+              transform: jellyTransform,
+              transition: 'transform 0.1s ease-out'
             }}
           />
         );
