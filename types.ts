@@ -60,6 +60,7 @@ export interface GameState {
   boosters: Booster[]; // Boosters on the board (separate from tiles)
   score: number;
   highScore: number;
+  moves: number; // Remaining moves for current level
   hand: (PieceData | null)[];
   gameOver: boolean;
   selectedPieceIndex: number | null;

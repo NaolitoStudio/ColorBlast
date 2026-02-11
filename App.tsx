@@ -58,6 +58,7 @@ const App: React.FC = () => {
       boosters: [],
       score: 0,
       highScore: Number(localStorage.getItem('highScore')) || 0,
+      moves: 2,
       hand: initialHand,
       gameOver: false,
       selectedPieceIndex: null,
@@ -93,6 +94,8 @@ const App: React.FC = () => {
   const [showAdPopup, setShowAdPopup] = useState(false);
   const [pendingTrashIndex, setPendingTrashIndex] = useState<number | null>(null);
   const [watchingAd, setWatchingAd] = useState(false);
+  const [showOutOfMovesPopup, setShowOutOfMovesPopup] = useState(false);
+  const [watchingMovesAd, setWatchingMovesAd] = useState(false);
   const [trashingPieceIndex, setTrashingPieceIndex] = useState<number | null>(null);
   const [trashSelectMode, setTrashSelectMode] = useState(false);
   const [shufflePhase, setShufflePhase] = useState<'darkening' | 'levitating' | 'scrambling' | 'landing' | null>(null);
@@ -548,6 +551,7 @@ const App: React.FC = () => {
       boosters: [],
       score: 0,
       highScore: Number(localStorage.getItem('highScore')) || 0,
+      moves: 2,
       hand: generateValidHand(initialGrid, initialLevel),
       gameOver: false,
       selectedPieceIndex: null,
@@ -562,6 +566,7 @@ const App: React.FC = () => {
     setCelebrating(false);
     setShowLevelPopup(false);
     setShowAllClear(false);
+    setShowOutOfMovesPopup(false);
     setTrashUses(1);
     setShuffleUses(3);
     setDeleteBlockUses(3);
@@ -575,6 +580,7 @@ const App: React.FC = () => {
       ...prev,
       grid: newGrid,
       boosters: [],
+      moves: 2,
       hand: generateValidHand(newGrid, nextLevel),
       gameOver: false,
       selectedPieceIndex: null,
@@ -589,6 +595,7 @@ const App: React.FC = () => {
     setCelebrating(false);
     setShowLevelPopup(false);
     setShowAllClear(false);
+    setShowOutOfMovesPopup(false);
     setTrashUses(1);
     setShuffleUses(3);
     setDeleteBlockUses(3);
@@ -826,7 +833,7 @@ const App: React.FC = () => {
       current: Math.min(obj.target, obj.current + (colorCounts[obj.color] || 0))
     }));
 
-    const isLevelComplete = newObjectives.every(obj => obj.current >= obj.target);
+    const isLevelComplete = newObjectives.slice(0, 2).every(obj => obj.current >= obj.target);
 
     // Collect IDs for animation
     const matchingIds = allPointsToRemove.map(p => newGrid[p.y][p.x]?.id).filter(Boolean) as string[];
@@ -963,6 +970,22 @@ const App: React.FC = () => {
   const handleCancelAd = () => {
     setShowAdPopup(false);
     setPendingTrashIndex(null);
+  };
+
+  // Handle out of moves popup
+  const handleWatchMovesAd = () => {
+    setWatchingMovesAd(true);
+    // Simulate watching an ad
+    setTimeout(() => {
+      setGameState(prev => ({ ...prev, moves: 5 })); // Give 5 more moves
+      setShowOutOfMovesPopup(false);
+      setWatchingMovesAd(false);
+    }, 1500);
+  };
+
+  const handleGameOverFromMoves = () => {
+    setShowOutOfMovesPopup(false);
+    setGameState(prev => ({ ...prev, gameOver: true }));
   };
 
   // Handle trash select mode
@@ -1301,7 +1324,7 @@ const App: React.FC = () => {
         ...obj,
         current: Math.min(obj.target, obj.current + (colorCounts[obj.color] || 0))
       }));
-      const isLevelComplete = newObjectives.every(obj => obj.current >= obj.target);
+      const isLevelComplete = newObjectives.slice(0, 2).every(obj => obj.current >= obj.target);
 
       return {
         ...prev,
@@ -1610,7 +1633,7 @@ const App: React.FC = () => {
         }));
 
         // Check if level complete
-        const isLevelComplete = newObjectives.every(obj => obj.current >= obj.target);
+        const isLevelComplete = newObjectives.slice(0, 2).every(obj => obj.current >= obj.target);
 
         // Calculate score
         const { score: moveScore, text, multiplier } = calculateScore(totalCleared, newCombo);
@@ -1664,11 +1687,15 @@ const App: React.FC = () => {
 
         triggerShake();
 
+        const newMoves = gameState.moves - 1;
+        const outOfMoves = newMoves <= 0 && !isLevelComplete;
+
         setGameState(prev => ({
           ...prev,
           grid: newGrid,
           boosters: newBoosters,
           score: newScore,
+          moves: newMoves,
           hand: newHand,
           selectedPieceIndex: null,
           clearingTiles: matchingIds,
@@ -1676,6 +1703,11 @@ const App: React.FC = () => {
           objectives: newObjectives,
           levelComplete: isLevelComplete
         }));
+
+        // Show popup if out of moves
+        if (outOfMoves) {
+          setTimeout(() => setShowOutOfMovesPopup(true), 500);
+        }
 
         setTimeout(() => {
           setGameState(prev => {
@@ -1773,7 +1805,9 @@ const App: React.FC = () => {
 
       } else {
         // No Match - Reset Combo
-        const lost = isGameOver(newGrid, newHand);
+        const newMoves = gameState.moves - 1;
+        const noValidMoves = isGameOver(newGrid, newHand);
+        const outOfMoves = newMoves <= 0;
         // Base score for placing pieces is piece size * 10
         const placementScore = piece.shape.length * 10;
 
@@ -1781,11 +1815,17 @@ const App: React.FC = () => {
           ...prev,
           grid: newGrid,
           score: score + placementScore,
+          moves: newMoves,
           hand: newHand,
           selectedPieceIndex: null,
-          gameOver: lost,
+          gameOver: noValidMoves, // Only immediate game over if no valid moves
           combo: 1
         }));
+
+        // Show popup if out of moves (but still have valid moves)
+        if (outOfMoves && !noValidMoves) {
+          setTimeout(() => setShowOutOfMovesPopup(true), 300);
+        }
       }
     } else {
       setGameState(prev => ({ ...prev, selectedPieceIndex: null }));
@@ -1946,8 +1986,8 @@ const App: React.FC = () => {
               Level {gameState.level}
             </div>
             <div className="flex flex-col">
-              <span className="text-2xl font-black text-white">{gameState.score}</span>
-              <span className="text-[8px] text-slate-500 uppercase font-bold">Score</span>
+              <span className={`text-2xl font-black ${gameState.moves <= 5 ? 'text-red-400' : 'text-white'}`}>{gameState.moves}</span>
+              <span className="text-[8px] text-slate-500 uppercase font-bold">Moves</span>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -1966,18 +2006,23 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        {/* Objectives */}
-        <div className="flex gap-2 justify-center">
-          {gameState.objectives.map((obj, i) => {
+        {/* Objectives - only show first 2 */}
+        <div className="flex gap-3 justify-center">
+          {gameState.objectives.slice(0, 2).map((obj, i) => {
             const progress = Math.min(100, (obj.current / obj.target) * 100);
             const isComplete = obj.current >= obj.target;
+            const barColor = isIconPath(obj.color) ? getParticleColor(obj.color) : obj.color;
             return (
-              <div key={i} className="flex-1 max-w-[100px]">
+              <div key={i} className="flex-1 max-w-[120px]">
                 <div className="flex items-center justify-between mb-1">
-                  <div
-                    className="w-4 h-4 rounded-md shadow-inner"
-                    style={{ backgroundColor: obj.color }}
-                  />
+                  {isIconPath(obj.color) ? (
+                    <img src={obj.color} alt="" className="w-5 h-5" />
+                  ) : (
+                    <div
+                      className="w-5 h-5 rounded-md shadow-inner"
+                      style={{ backgroundColor: obj.color }}
+                    />
+                  )}
                   <span className={`text-xs font-bold ${isComplete ? 'text-green-400' : 'text-white'}`}>
                     {obj.current}/{obj.target}
                   </span>
@@ -1987,7 +2032,7 @@ const App: React.FC = () => {
                     className={`h-full transition-all duration-300 rounded-full ${isComplete ? 'bg-green-500' : ''}`}
                     style={{
                       width: `${progress}%`,
-                      backgroundColor: isComplete ? undefined : obj.color
+                      backgroundColor: isComplete ? undefined : barColor
                     }}
                   />
                 </div>
@@ -2333,7 +2378,9 @@ const App: React.FC = () => {
         {gameState.gameOver && !gameState.levelComplete && (
           <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-md rounded-3xl flex flex-col items-center justify-center p-8 text-center z-50">
             <h2 className="text-4xl font-black mb-1 text-white">GAME OVER</h2>
-            <p className="text-slate-400 text-sm mb-8 font-medium">No valid moves left!</p>
+            <p className="text-slate-400 text-sm mb-8 font-medium">
+              {gameState.moves <= 0 ? 'Out of moves!' : 'No valid moves left!'}
+            </p>
             <div className="bg-slate-900 rounded-2xl p-6 w-full mb-8 border border-slate-800">
               <span className="text-slate-500 text-[10px] uppercase font-bold tracking-widest block mb-2">Final Score</span>
               <span className="text-5xl font-black text-white">{gameState.score}</span>
@@ -2583,6 +2630,49 @@ const App: React.FC = () => {
                     className="w-full bg-slate-800 hover:bg-slate-700 text-slate-400 font-bold py-3 rounded-2xl transition-all active:scale-95"
                   >
                     Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Out of Moves Popup */}
+      {showOutOfMovesPopup && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100]">
+          <div className="bg-slate-900 rounded-3xl p-6 mx-4 max-w-sm w-full border border-slate-700 shadow-2xl">
+            {watchingMovesAd ? (
+              <div className="text-center py-8">
+                <div className="text-5xl mb-4 animate-pulse">📺</div>
+                <div className="w-full bg-slate-800 rounded-full h-2 mb-4 overflow-hidden">
+                  <div className="bg-gradient-to-r from-green-500 to-emerald-500 h-full rounded-full"
+                    style={{ animation: 'adProgress 1.5s linear forwards' }}></div>
+                </div>
+                <p className="text-slate-400 text-sm font-medium">Playing ad...</p>
+              </div>
+            ) : (
+              <div className="text-center">
+                <div className="text-5xl mb-4">⏰</div>
+                <h3 className="text-2xl font-black text-white mb-2">Out of Moves!</h3>
+                <p className="text-slate-400 text-sm mb-6">
+                  Watch an ad to get 5 more moves and keep playing!
+                </p>
+
+                <div className="flex flex-col gap-3">
+                  <button
+                    onClick={handleWatchMovesAd}
+                    className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500
+                      text-white font-black py-4 rounded-2xl transition-all active:scale-95 shadow-lg flex items-center justify-center gap-2"
+                  >
+                    <i className="fa-solid fa-play"></i>
+                    Continue (+5 Moves)
+                  </button>
+                  <button
+                    onClick={handleGameOverFromMoves}
+                    className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-2xl transition-all active:scale-95"
+                  >
+                    Game Over
                   </button>
                 </div>
               </div>

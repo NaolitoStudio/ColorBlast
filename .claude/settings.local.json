@@ -5,7 +5,8 @@
       "Bash(npm install:*)",
       "Bash(npx vite:*)",
       "Bash(/mnt/c/Windows/System32/cmd.exe /c \"npm install 2>&1\")",
-      "Bash(/mnt/c/Windows/System32/cmd.exe /c \"npm run dev\")"
+      "Bash(/mnt/c/Windows/System32/cmd.exe /c \"npm run dev\")",
+      "Bash(npx tsc:*)"
     ]
   }
 }
