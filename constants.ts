@@ -79,7 +79,7 @@ export const LEVELS: LevelConfig[] = [
   {
     level: 1,
     objectives: [
-      { color: Color.RED, target: 15 },
+      { color: Color.ORANGE, target: 15 },
       { color: Color.BLUE, target: 15 }
     ],
     gridFill: 0.25
@@ -87,7 +87,7 @@ export const LEVELS: LevelConfig[] = [
   {
     level: 2,
     objectives: [
-      { color: Color.RED, target: 15 },
+      { color: Color.ORANGE, target: 15 },
       { color: Color.BLUE, target: 15 },
       { color: Color.GREEN, target: 15 }
     ],
@@ -96,7 +96,7 @@ export const LEVELS: LevelConfig[] = [
   {
     level: 3,
     objectives: [
-      { color: Color.RED, target: 15 },
+      { color: Color.ORANGE, target: 15 },
       { color: Color.BLUE, target: 15 },
       { color: Color.GREEN, target: 15 },
       { color: Color.YELLOW, target: 15 }
@@ -106,7 +106,7 @@ export const LEVELS: LevelConfig[] = [
   {
     level: 4,
     objectives: [
-      { color: Color.RED, target: 15 },
+      { color: Color.ORANGE, target: 15 },
       { color: Color.BLUE, target: 15 },
       { color: Color.GREEN, target: 15 },
       { color: Color.YELLOW, target: 15 }
@@ -116,7 +116,7 @@ export const LEVELS: LevelConfig[] = [
   {
     level: 5,
     objectives: [
-      { color: Color.RED, target: 15 },
+      { color: Color.ORANGE, target: 15 },
       { color: Color.BLUE, target: 15 },
       { color: Color.GREEN, target: 15 },
       { color: Color.YELLOW, target: 15 }

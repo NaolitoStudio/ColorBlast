@@ -3,13 +3,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { GameState, PieceData, Point, Color, LevelObjective, Booster, BoosterType } from './types';
 import { createRandomGrid, generatePiece, generateValidHand, canPlacePiece, findMatchGroups, findGroupCenter, getBombExplosionPoints, isGameOver, calculateScore, initializeObjectives, getAdjacentToMatches } from './utils/gameLogic';
 import { GRID_SIZE, getLevelConfig } from './constants';
+import { ICONS } from './assets';
 
-// Block images by color
-import orangeBlockImg from './Graphics/1770817203228-83afc8e6-c05d-4fff-b742-d6586f36ee10.jpg';
-
-const BLOCK_IMAGES: Record<string, string> = {
-  [Color.RED]: orangeBlockImg,
-};
+// Since Color enum values are already icon paths, we don't need a separate mapping
+// Just check if the color value looks like an icon path (starts with '/icons/')
+const isIconPath = (color: string) => color.startsWith('/icons/');
 
 const DRAG_OFFSET_Y = 100; // How much the piece is lifted above the finger/cursor
 
@@ -1370,8 +1368,8 @@ const App: React.FC = () => {
               // Determine if we should use an image
               const cellColor = cell?.color;
               const ghostColor = ghost?.color;
-              const cellHasImage = cellColor && BLOCK_IMAGES[cellColor];
-              const ghostHasImage = ghostColor && BLOCK_IMAGES[ghostColor];
+              const cellHasImage = cellColor && isIconPath(cellColor);
+              const ghostHasImage = ghostColor && isIconPath(ghostColor);
 
               // Calculate background
               let bgColor = 'rgba(30, 41, 59, 0.3)'; // empty cell
@@ -1382,14 +1380,14 @@ const App: React.FC = () => {
               } else if (cell) {
                 if (cellHasImage) {
                   bgColor = 'transparent';
-                  bgImage = `url(${BLOCK_IMAGES[cellColor]})`;
+                  bgImage = `url(${cellColor})`;
                 } else {
                   bgColor = cellColor;
                 }
               } else if (ghost) {
                 if (ghostHasImage) {
                   bgColor = 'transparent';
-                  bgImage = `url(${BLOCK_IMAGES[ghostColor]})`;
+                  bgImage = `url(${ghostColor})`;
                 } else {
                   bgColor = ghostColor;
                 }
@@ -1679,7 +1677,7 @@ const PiecePreview: React.FC<{ piece: PieceData, active: boolean, size?: 'small'
         const inShape = indexInShape !== -1;
         
         const color = inShape ? piece.colors[indexInShape] : undefined;
-        const hasImage = color && BLOCK_IMAGES[color];
+        const hasImage = color && isIconPath(color);
 
         return (
           <div
@@ -1687,7 +1685,7 @@ const PiecePreview: React.FC<{ piece: PieceData, active: boolean, size?: 'small'
             className={`${boxSize} rounded-lg transition-all duration-200 ${inShape ? 'shadow-md' : 'bg-transparent'}`}
             style={{
               backgroundColor: hasImage ? 'transparent' : (inShape ? color : 'transparent'),
-              backgroundImage: hasImage ? `url(${BLOCK_IMAGES[color]})` : 'none',
+              backgroundImage: hasImage ? `url(${color})` : 'none',
               backgroundSize: 'cover',
               backgroundPosition: 'center',
               boxShadow: inShape ? 'inset 0 1px 3px rgba(255,255,255,0.4), 0 2px 4px rgba(0,0,0,0.3)' : 'none'
