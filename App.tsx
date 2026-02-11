@@ -787,8 +787,10 @@ const App: React.FC = () => {
     if (boardRef.current) {
       const rect = boardRef.current.getBoundingClientRect();
       const padding = 16; // p-4 = 1rem = 16px
+      const gap = 2; // gap-0.5 = 2px
       const gridWidth = rect.width - (padding * 2);
-      const cellSize = gridWidth / GRID_SIZE;
+      const totalGaps = (GRID_SIZE - 1) * gap;
+      const cellSize = (gridWidth - totalGaps) / GRID_SIZE;
       setDragCellSize(cellSize);
     }
 
@@ -1220,7 +1222,7 @@ const App: React.FC = () => {
           position: fixed;
           pointer-events: none;
           z-index: 1000;
-          transform: translate(-50%, -50%) scale(1.1);
+          transform: translate(-50%, -50%);
           filter: drop-shadow(0 15px 25px rgba(0,0,0,0.5));
         }
         @keyframes shake {
