@@ -78,16 +78,57 @@ export const canPieceFitAnywhere = (grid: (TileData | null)[][], piece: PieceDat
 };
 
 /**
- * Generate a piece that can definitely be placed on the grid
- * Tries random pieces first, then systematically finds one that fits
+ * Simulate placing a piece and check if it creates any match (group of 3+)
+ */
+export const wouldCreateMatch = (
+  grid: (TileData | null)[][],
+  piece: PieceData,
+  x: number,
+  y: number
+): boolean => {
+  // Create a temporary grid with the piece placed
+  const tempGrid = grid.map(row => [...row]);
+
+  for (let i = 0; i < piece.shape.length; i++) {
+    const point = piece.shape[i];
+    const targetX = x + point.x;
+    const targetY = y + point.y;
+    tempGrid[targetY][targetX] = {
+      color: piece.colors[i],
+      id: `temp-${i}`
+    };
+  }
+
+  // Check if any matches exist
+  const matches = findMatchGroups(tempGrid);
+  return matches.length > 0;
+};
+
+/**
+ * Check if a piece can create a valid match anywhere on the grid
+ */
+export const canPieceCreateMatch = (grid: (TileData | null)[][], piece: PieceData): boolean => {
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      if (canPlacePiece(grid, piece, x, y) && wouldCreateMatch(grid, piece, x, y)) {
+        return true;
+      }
+    }
+  }
+  return false;
+};
+
+/**
+ * Generate a piece that can create valid color combinations on the grid
+ * Tries to assign colors that will allow matches
  */
 export const generatePiece = (grid?: (TileData | null)[][], level: number = 1): PieceData => {
   const levelColors = getColorsForLevel(level);
 
-  const createPieceFromShape = (shape: Point[]): PieceData => ({
+  const createPieceFromShape = (shape: Point[], colors?: Color[]): PieceData => ({
     id: Math.random().toString(36).substr(2, 9),
     shape: [...shape],
-    colors: shape.map(() => levelColors[Math.floor(Math.random() * levelColors.length)])
+    colors: colors || shape.map(() => levelColors[Math.floor(Math.random() * levelColors.length)])
   });
 
   // If no grid provided, just return random piece (for initial load)
@@ -99,7 +140,28 @@ export const generatePiece = (grid?: (TileData | null)[][], level: number = 1): 
   // Shuffle shapes for randomness
   const shuffledShapes = [...SHAPES].sort(() => Math.random() - 0.5);
 
-  // Try each shape until we find one that fits
+  // Try each shape until we find one that can create a match
+  for (const shape of shuffledShapes) {
+    // First check if the shape fits anywhere
+    const testPiece = createPieceFromShape(shape);
+    if (!canPieceFitAnywhere(grid, testPiece)) continue;
+
+    // Try multiple color combinations to find one that creates a match
+    for (let attempt = 0; attempt < 15; attempt++) {
+      const piece = createPieceFromShape(shape);
+      if (canPieceCreateMatch(grid, piece)) {
+        return piece;
+      }
+    }
+
+    // Try strategic coloring: find adjacent colors on the grid and use them
+    const strategicPiece = createStrategicColoredPiece(grid, shape, levelColors);
+    if (strategicPiece && canPieceCreateMatch(grid, strategicPiece)) {
+      return strategicPiece;
+    }
+  }
+
+  // Fallback: return a piece that at least fits (may not create match immediately)
   for (const shape of shuffledShapes) {
     const piece = createPieceFromShape(shape);
     if (canPieceFitAnywhere(grid, piece)) {
@@ -107,8 +169,81 @@ export const generatePiece = (grid?: (TileData | null)[][], level: number = 1): 
     }
   }
 
-  // Fallback: return single dot (always fits if there's any empty space)
-  return createPieceFromShape(SHAPES[0]);
+  return createPieceFromShape(shuffledShapes[0]);
+};
+
+/**
+ * Create a piece with colors strategically chosen to match adjacent grid colors
+ */
+const createStrategicColoredPiece = (
+  grid: (TileData | null)[][],
+  shape: Point[],
+  levelColors: Color[]
+): PieceData | null => {
+  // Find all positions where this shape could fit
+  const validPositions: { x: number; y: number }[] = [];
+  const tempPiece: PieceData = {
+    id: 'temp',
+    shape: [...shape],
+    colors: shape.map(() => levelColors[0])
+  };
+
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      if (canPlacePiece(grid, tempPiece, x, y)) {
+        validPositions.push({ x, y });
+      }
+    }
+  }
+
+  if (validPositions.length === 0) return null;
+
+  // For each valid position, find adjacent colors and try to use them
+  for (const pos of validPositions) {
+    const adjacentColors = new Map<Color, number>();
+
+    // Check each cell of the piece placement for adjacent existing tiles
+    for (const point of shape) {
+      const px = pos.x + point.x;
+      const py = pos.y + point.y;
+
+      // Check 4 neighbors
+      const neighbors = [
+        { x: px - 1, y: py },
+        { x: px + 1, y: py },
+        { x: px, y: py - 1 },
+        { x: px, y: py + 1 }
+      ];
+
+      for (const n of neighbors) {
+        if (n.x >= 0 && n.x < GRID_SIZE && n.y >= 0 && n.y < GRID_SIZE) {
+          const tile = grid[n.y][n.x];
+          if (tile && !tile.locked) {
+            adjacentColors.set(tile.color, (adjacentColors.get(tile.color) || 0) + 1);
+          }
+        }
+      }
+    }
+
+    // Use the most common adjacent color for better match chances
+    if (adjacentColors.size > 0) {
+      const sortedColors = [...adjacentColors.entries()].sort((a, b) => b[1] - a[1]);
+      const dominantColor = sortedColors[0][0];
+
+      // Create piece with mix of dominant color and random colors
+      const colors = shape.map(() => {
+        return Math.random() < 0.6 ? dominantColor : levelColors[Math.floor(Math.random() * levelColors.length)];
+      });
+
+      return {
+        id: Math.random().toString(36).substr(2, 9),
+        shape: [...shape],
+        colors
+      };
+    }
+  }
+
+  return null;
 };
 
 /**
