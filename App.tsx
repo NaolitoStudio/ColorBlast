@@ -114,7 +114,7 @@ const App: React.FC = () => {
     cellSize: number;
   }>>([]);
   const [fadingBoxIndex, setFadingBoxIndex] = useState<{ index: number; fading: boolean } | null>(null);
-  const [fadingInPieces, setFadingInPieces] = useState<boolean>(false);
+  const [fadingInPieceIndex, setFadingInPieceIndex] = useState<number | null>(null);
   const [returningPiece, setReturningPiece] = useState<{
     piece: PieceData;
     fromX: number;
@@ -1631,17 +1631,12 @@ const App: React.FC = () => {
         };
       });
 
+      // Generate a new piece for the used slot immediately
       let newHand = [...hand];
-      newHand[selectedPieceIndex!] = null;
-
-      // When all pieces are used, generate new hand
-      if (newHand.every(p => p === null)) {
-        const validHand = generateValidHand(newGrid, level);
-        newHand = validHand;
-        // Trigger fade-in for new pieces
-        setFadingInPieces(true);
-        requestAnimationFrame(() => setFadingInPieces(false));
-      }
+      newHand[selectedPieceIndex!] = generatePiece(newGrid, level);
+      // Trigger fade-in for the new piece
+      setFadingInPieceIndex(selectedPieceIndex);
+      requestAnimationFrame(() => setFadingInPieceIndex(null));
 
       const matchGroups = findMatchGroups(newGrid);
 
@@ -2626,7 +2621,7 @@ const App: React.FC = () => {
                   relative transition-all duration-300
                   ${piece === null && fadingBoxIndex?.index !== index ? 'opacity-0 pointer-events-none' : ''}
                   ${fadingBoxIndex?.index === index && fadingBoxIndex.fading ? 'opacity-0' : ''}
-                  ${fadingInPieces ? 'opacity-0' : ''}
+                  ${fadingInPieceIndex === index ? 'opacity-0' : ''}
                   ${trashingPieceIndex === index ? 'piece-trashing' : ''}
                   ${trashSelectMode && piece ? 'cursor-pointer z-50 hover:scale-110 hover:brightness-125' : ''}
                   ${trashSelectMode && !piece ? 'opacity-30' : ''}
