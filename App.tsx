@@ -92,6 +92,7 @@ const App: React.FC = () => {
   const [pendingTrashIndex, setPendingTrashIndex] = useState<number | null>(null);
   const [watchingAd, setWatchingAd] = useState(false);
   const [trashingPieceIndex, setTrashingPieceIndex] = useState<number | null>(null);
+  const [fadingBoxIndex, setFadingBoxIndex] = useState<{ index: number; fading: boolean } | null>(null);
   const [returningPiece, setReturningPiece] = useState<{
     piece: PieceData;
     fromX: number;
@@ -185,6 +186,46 @@ const App: React.FC = () => {
         life: 40 + Math.random() * 20,
         maxLife: 60,
         size: Math.random() * 6 + 4
+      });
+    }
+    setParticles(prev => [...prev, ...newParticles]);
+  };
+
+  const spawnDustFromPieceBox = (pieceIndex: number, piece: PieceData) => {
+    const pieceBox = pieceRefs.current[pieceIndex];
+    if (!pieceBox) return;
+
+    const rect = pieceBox.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+
+    const newParticles: Particle[] = [];
+    const particleCount = piece.shape.length * 8; // More particles for dust effect
+
+    // Light blue/cyan colors like the piece box
+    const boxColors = ['#67e8f9', '#22d3ee', '#a5f3fc', '#06b6d4', '#99f6e4'];
+
+    for (let i = 0; i < particleCount; i++) {
+      const particleColor = boxColors[Math.floor(Math.random() * boxColors.length)];
+
+      // Spread particles across the piece box area
+      const offsetX = (Math.random() - 0.5) * rect.width * 0.6;
+      const offsetY = (Math.random() - 0.5) * rect.height * 0.6;
+
+      // Random direction, mostly outward
+      const angle = Math.random() * Math.PI * 2;
+      const speed = Math.random() * 3 + 1;
+
+      newParticles.push({
+        id: ++particleIdCounter.current,
+        x: centerX + offsetX,
+        y: centerY + offsetY,
+        vx: Math.cos(angle) * speed + (offsetX * 0.05), // Slight outward bias
+        vy: Math.sin(angle) * speed - 1 + (offsetY * 0.02),
+        color: particleColor,
+        life: 25 + Math.random() * 15, // Shorter life for dust
+        maxLife: 40,
+        size: Math.random() * 2 + 1 // Tiny dust particles
       });
     }
     setParticles(prev => [...prev, ...newParticles]);
@@ -968,6 +1009,16 @@ const App: React.FC = () => {
     const piece = hand[selectedPieceIndex!];
 
     if (piece && canPlacePiece(grid, piece, x, y)) {
+      // Fade out the box (but not if it's the last piece)
+      const remainingPieces = hand.filter((p, i) => p !== null && i !== selectedPieceIndex).length;
+      if (remainingPieces > 0) {
+        setFadingBoxIndex({ index: selectedPieceIndex!, fading: false });
+        requestAnimationFrame(() => {
+          setFadingBoxIndex(prev => prev ? { ...prev, fading: true } : null);
+        });
+        setTimeout(() => setFadingBoxIndex(null), 350);
+      }
+
       const newGrid = grid.map(row => [...row]);
       piece.shape.forEach((point, i) => {
         newGrid[y + point.y][x + point.x] = {
@@ -1347,7 +1398,7 @@ const App: React.FC = () => {
           100% { opacity: 0; }
         }
         .animate-fade-out {
-          animation: fade-out 0.4s ease-out forwards;
+          animation: fade-out 0.3s ease-out forwards;
         }
         @keyframes bomb-glow {
           0%, 100% { filter: brightness(1); }
@@ -1773,8 +1824,9 @@ const App: React.FC = () => {
                 ref={el => pieceRefs.current[index] = el}
                 className={`
                   flex items-center justify-center
-                  transition-all duration-300 relative
-                  ${piece === null ? 'opacity-0 scale-90 pointer-events-none' : ''}
+                  relative transition-opacity duration-300
+                  ${piece === null && fadingBoxIndex?.index !== index ? 'opacity-0 pointer-events-none' : ''}
+                  ${fadingBoxIndex?.index === index && fadingBoxIndex.fading ? 'opacity-0' : ''}
                   ${trashingPieceIndex === index ? 'piece-trashing' : ''}
                 `}
                 style={{
