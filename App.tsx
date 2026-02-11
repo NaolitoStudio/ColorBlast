@@ -13,11 +13,11 @@ const DRAG_OFFSET_Y = 100; // How much the piece is lifted above the finger/curs
 
 // Helper to get particle color from icon path
 const getParticleColor = (iconPath: string): string => {
-  if (iconPath.includes('Layer-1')) return '#3b82f6'; // Blue
-  if (iconPath.includes('Layer-2')) return '#22c55e'; // Green
-  if (iconPath.includes('Layer-3')) return '#a855f7'; // Purple
-  if (iconPath.includes('Layer-4')) return '#eab308'; // Yellow
-  if (iconPath.includes('Layer-5')) return '#f97316'; // Orange
+  if (iconPath.includes('blue')) return '#3b82f6'; // Blue
+  if (iconPath.includes('green')) return '#22c55e'; // Green
+  if (iconPath.includes('purple')) return '#a855f7'; // Purple
+  if (iconPath.includes('yellow')) return '#eab308'; // Yellow
+  if (iconPath.includes('orange')) return '#f97316'; // Orange
   return '#888888'; // Fallback
 };
 
@@ -143,6 +143,9 @@ const App: React.FC = () => {
   };
 
   const spawnParticles = (x: number, y: number, color: string, count: number) => {
+    // Convert icon path to actual color for particles
+    const particleColor = isIconPath(color) ? getParticleColor(color) : color;
+
     const newParticles: Particle[] = [];
     for (let i = 0; i < count; i++) {
       const angle = Math.random() * Math.PI * 2;
@@ -153,7 +156,7 @@ const App: React.FC = () => {
         y,
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed - 2, // Slight upward bias
-        color,
+        color: particleColor,
         life: 40 + Math.random() * 20,
         maxLife: 60,
         size: Math.random() * 6 + 4
@@ -1433,25 +1436,22 @@ const App: React.FC = () => {
                   {/* Affected area indicator - shows during booster activation with fade */}
                   {isAffected && !booster && (
                     <div
-                      className="absolute inset-0 rounded-lg pointer-events-none z-10 animate-fade-out"
+                      className="absolute inset-0 pointer-events-none z-10 animate-fade-out"
                       style={{
                         backgroundColor: affectedColor
                       }}
                     />
                   )}
-                  {cell && !booster && (
-                    <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent rounded-lg pointer-events-none" />
-                  )}
                   {/* Locked tile overlay - frozen appearance */}
                   {cell?.locked && !booster && (
-                    <div className="absolute inset-0 rounded-lg pointer-events-none z-20 flex items-center justify-center bg-slate-900/60">
+                    <div className="absolute inset-0 pointer-events-none z-20 flex items-center justify-center bg-slate-900/60">
                       <div className="w-full h-full flex items-center justify-center">
                         <svg className="w-4 h-4 text-slate-300/80" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
                         </svg>
                       </div>
                       {/* Ice/frost pattern overlay */}
-                      <div className="absolute inset-0 rounded-lg opacity-30" style={{
+                      <div className="absolute inset-0 opacity-30" style={{
                         background: 'repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(148, 163, 184, 0.3) 2px, rgba(148, 163, 184, 0.3) 4px)'
                       }} />
                     </div>
