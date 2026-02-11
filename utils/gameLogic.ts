@@ -1,16 +1,19 @@
-
 import { GRID_SIZE, SHAPES, COLORS } from '../constants';
 import { Color, PieceData, Point, TileData } from '../types';
+import { Random } from './random';
 
 export const createEmptyGrid = () => 
   Array(GRID_SIZE).fill(null).map(() => Array(GRID_SIZE).fill(null));
 
-export const createRandomGrid = (fillProbability: number = 0.3): (TileData | null)[][] => {
+export const createRandomGrid = (rng: Random, maxColors: number = COLORS.length, fillProbability: number = 0.3): (TileData | null)[][] => {
   const grid: (TileData | null)[][] = Array(GRID_SIZE).fill(null).map(() => Array(GRID_SIZE).fill(null));
+  
+  // Select a subset of colors if maxColors is specified
+  const startingColors = COLORS.slice(0, Math.min(maxColors, COLORS.length));
 
   for (let y = 0; y < GRID_SIZE; y++) {
     for (let x = 0; x < GRID_SIZE; x++) {
-      if (Math.random() < fillProbability) {
+      if (rng.next() < fillProbability) {
         const forbiddenColors = new Set<Color>();
 
         // Check horizontal neighbors to prevent immediate match-3
@@ -23,13 +26,13 @@ export const createRandomGrid = (fillProbability: number = 0.3): (TileData | nul
           forbiddenColors.add(grid[y-1][x]!.color);
         }
 
-        const availableColors = COLORS.filter(c => !forbiddenColors.has(c));
+        const availableColors = startingColors.filter(c => !forbiddenColors.has(c));
         
         if (availableColors.length > 0) {
-          const color = availableColors[Math.floor(Math.random() * availableColors.length)];
+          const color = availableColors[Math.floor(rng.next() * availableColors.length)];
           grid[y][x] = {
             color,
-            id: `init-${x}-${y}-${Math.random()}`
+            id: `init-${x}-${y}-${rng.next()}`
           };
         }
       }
@@ -38,17 +41,17 @@ export const createRandomGrid = (fillProbability: number = 0.3): (TileData | nul
   return grid;
 };
 
-export const generatePiece = (availableColors: Color[] = COLORS): PieceData => {
-  const shape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
+export const generatePiece = (rng: Random, availableColors: Color[] = COLORS): PieceData => {
+  const shape = SHAPES[Math.floor(rng.next() * SHAPES.length)];
   
-  // Use provided colors, fallback to all colors if none provided
-  const sourceColors = availableColors.length > 0 ? availableColors : COLORS;
+  // CRITICAL FIX: Ensure we use the exact array provided, or fallback to full list
+  const sourceColors = (availableColors && availableColors.length > 0) ? availableColors : COLORS;
 
   return {
-    id: Math.random().toString(36).substr(2, 9),
+    id: rng.next().toString(36).substr(2, 9),
     shape: [...shape],
-    // Assign a random color to each tile in the piece
-    colors: shape.map(() => sourceColors[Math.floor(Math.random() * sourceColors.length)])
+    // Use sourceColors for every tile in the piece
+    colors: shape.map(() => sourceColors[Math.floor(rng.next() * sourceColors.length)])
   };
 };
 

@@ -12,10 +12,13 @@ export type Point = {
   y: number;
 };
 
+export type BoosterType = 'line' | 'group';
+
 export interface TileData {
   color: Color;
   id: string;
   isBooster?: boolean;
+  boosterType?: BoosterType;
 }
 
 export interface PieceData {
@@ -33,4 +36,6 @@ export interface GameState {
   selectedPieceIndex: number | null;
   clearingTiles: string[]; // IDs of tiles currently animating out
   combo: number;
+  currentLevel: number | null;
+  rngSeed: string | null;
 }
