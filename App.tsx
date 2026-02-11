@@ -45,6 +45,9 @@ interface FloatingText {
 }
 
 const App: React.FC = () => {
+  // Unique ID counter for particles and other elements
+  const particleIdCounter = useRef(0);
+
   const [gameState, setGameState] = useState<GameState>(() => {
     const initialLevel = 1;
     const levelConfig = getLevelConfig(initialLevel);
@@ -97,22 +100,22 @@ const App: React.FC = () => {
     const updateEffects = () => {
       setParticles(prev => {
         if (prev.length === 0) return prev;
-        return prev.filter(p => p.life > 0).map(p => ({
+        return prev.map(p => ({
           ...p,
           x: p.x + p.vx,
           y: p.y + p.vy,
           vy: p.vy + 0.5, // Gravity
           life: p.life - 1
-        }));
+        })).filter(p => p.life > 0);
       });
-      
+
       setFloatingTexts(prev => {
         if (prev.length === 0) return prev;
-        return prev.filter(t => t.life > 0).map(t => ({
+        return prev.map(t => ({
           ...t,
           y: t.y - 1.5, // Float up
           life: t.life - 1
-        }));
+        })).filter(t => t.life > 0);
       });
 
       animationFrameId = requestAnimationFrame(updateEffects);
@@ -151,7 +154,7 @@ const App: React.FC = () => {
       const angle = Math.random() * Math.PI * 2;
       const speed = Math.random() * 4 + 2;
       newParticles.push({
-        id: Date.now() + Math.random(),
+        id: ++particleIdCounter.current,
         x,
         y,
         vx: Math.cos(angle) * speed,
@@ -167,7 +170,7 @@ const App: React.FC = () => {
 
   const spawnFloatingText = (x: number, y: number, text: string) => {
     setFloatingTexts(prev => [...prev, {
-      id: Date.now() + Math.random(),
+      id: ++particleIdCounter.current,
       x,
       y,
       text,
@@ -1246,7 +1249,7 @@ const App: React.FC = () => {
 
       {/* Effects Layer */}
       <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden">
-        {particles.map(p => (
+        {particles.filter(p => p.life > 0).map(p => (
           <div
             key={p.id}
             style={{
@@ -1257,8 +1260,9 @@ const App: React.FC = () => {
               height: p.size,
               backgroundColor: p.color,
               borderRadius: '4px',
-              opacity: p.life / p.maxLife,
-              transform: `translate(-50%, -50%) rotate(${p.life * 10}deg)`
+              opacity: Math.max(0, p.life / p.maxLife),
+              transform: `translate(-50%, -50%) rotate(${p.life * 10}deg)`,
+              willChange: 'transform, opacity'
             }}
           />
         ))}
@@ -1614,7 +1618,7 @@ const App: React.FC = () => {
         <div
           ref={trashRef}
           className={`
-            h-16 flex items-center justify-center gap-2 relative
+            h-16 flex items-center justify-center gap-2 relative mt-6
             transition-all duration-200
             ${hoveredPowerup === 'trash' ? 'scale-[1.02]' : ''}
           `}
