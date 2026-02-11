@@ -84,14 +84,23 @@ const App: React.FC = () => {
   const [showAllClear, setShowAllClear] = useState(false);
   const [affectedCells, setAffectedCells] = useState<Set<string>>(new Set());
   const [affectedColor, setAffectedColor] = useState<string>('transparent');
-  const [hoveredPowerup, setHoveredPowerup] = useState<'trash' | null>(null);
 
   // Powerup uses (reset each level)
   const [trashUses, setTrashUses] = useState(1);
+  const [shuffleUses, setShuffleUses] = useState(2);
   const [showAdPopup, setShowAdPopup] = useState(false);
   const [pendingTrashIndex, setPendingTrashIndex] = useState<number | null>(null);
   const [watchingAd, setWatchingAd] = useState(false);
   const [trashingPieceIndex, setTrashingPieceIndex] = useState<number | null>(null);
+  const [trashSelectMode, setTrashSelectMode] = useState(false);
+  const [shufflePhase, setShufflePhase] = useState<'darkening' | 'levitating' | 'scrambling' | 'landing' | null>(null);
+  const [shuffleAnimations, setShuffleAnimations] = useState<Array<{
+    tile: { color: Color; id: string };
+    fromPx: { x: number; y: number };
+    toPx: { x: number; y: number };
+    progress: number;
+    cellSize: number;
+  }>>([]);
   const [fadingBoxIndex, setFadingBoxIndex] = useState<{ index: number; fading: boolean } | null>(null);
   const [fadingInPieces, setFadingInPieces] = useState<boolean>(false);
   const [returningPiece, setReturningPiece] = useState<{
@@ -105,7 +114,6 @@ const App: React.FC = () => {
   } | null>(null);
 
   const boardRef = useRef<HTMLDivElement>(null);
-  const trashRef = useRef<HTMLDivElement>(null);
   const pieceRefs = useRef<(HTMLDivElement | null)[]>([null, null, null]);
 
   // Animation Loop
@@ -187,46 +195,6 @@ const App: React.FC = () => {
         life: 40 + Math.random() * 20,
         maxLife: 60,
         size: Math.random() * 6 + 4
-      });
-    }
-    setParticles(prev => [...prev, ...newParticles]);
-  };
-
-  const spawnDustFromPieceBox = (pieceIndex: number, piece: PieceData) => {
-    const pieceBox = pieceRefs.current[pieceIndex];
-    if (!pieceBox) return;
-
-    const rect = pieceBox.getBoundingClientRect();
-    const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height / 2;
-
-    const newParticles: Particle[] = [];
-    const particleCount = piece.shape.length * 8; // More particles for dust effect
-
-    // Light blue/cyan colors like the piece box
-    const boxColors = ['#67e8f9', '#22d3ee', '#a5f3fc', '#06b6d4', '#99f6e4'];
-
-    for (let i = 0; i < particleCount; i++) {
-      const particleColor = boxColors[Math.floor(Math.random() * boxColors.length)];
-
-      // Spread particles across the piece box area
-      const offsetX = (Math.random() - 0.5) * rect.width * 0.6;
-      const offsetY = (Math.random() - 0.5) * rect.height * 0.6;
-
-      // Random direction, mostly outward
-      const angle = Math.random() * Math.PI * 2;
-      const speed = Math.random() * 3 + 1;
-
-      newParticles.push({
-        id: ++particleIdCounter.current,
-        x: centerX + offsetX,
-        y: centerY + offsetY,
-        vx: Math.cos(angle) * speed + (offsetX * 0.05), // Slight outward bias
-        vy: Math.sin(angle) * speed - 1 + (offsetY * 0.02),
-        color: particleColor,
-        life: 25 + Math.random() * 15, // Shorter life for dust
-        maxLife: 40,
-        size: Math.random() * 2 + 1 // Tiny dust particles
       });
     }
     setParticles(prev => [...prev, ...newParticles]);
@@ -517,6 +485,7 @@ const App: React.FC = () => {
     setShowLevelPopup(false);
     setShowAllClear(false);
     setTrashUses(1);
+    setShuffleUses(2);
   };
 
   const handleNextLevel = () => {
@@ -542,6 +511,7 @@ const App: React.FC = () => {
     setShowLevelPopup(false);
     setShowAllClear(false);
     setTrashUses(1);
+    setShuffleUses(2);
   };
 
   // Handle clicking on a booster to activate it
@@ -857,10 +827,316 @@ const App: React.FC = () => {
     setPendingTrashIndex(null);
   };
 
-  const handlePowerupActivation = () => {
-    const pieceIndex = gameState.selectedPieceIndex;
-    if (pieceIndex === null) return;
-    trashPiece(pieceIndex);
+  // Handle trash select mode
+  const handleTrashSelect = (index: number) => {
+    setTrashSelectMode(false);
+    trashPiece(index);
+  };
+
+  // Handle shuffle powerup
+  const activateShuffle = () => {
+    if (shuffleUses <= 0 || shufflePhase || !boardRef.current) return;
+    setShuffleUses(prev => prev - 1);
+
+    // Read cell positions BEFORE any transforms are applied
+    const boardRect = boardRef.current.getBoundingClientRect();
+    const gridElement = boardRef.current.querySelector('.board-grid');
+    if (!gridElement) return;
+
+    const cellElements = gridElement.children;
+    const cellPositions: { x: number; y: number; width: number }[] = [];
+
+    for (let i = 0; i < cellElements.length; i++) {
+      const cellRect = cellElements[i].getBoundingClientRect();
+      cellPositions.push({
+        x: cellRect.left - boardRect.left,
+        y: cellRect.top - boardRect.top,
+        width: cellRect.width
+      });
+    }
+
+    // Start shuffle animation sequence
+    setShufflePhase('darkening');
+
+    setTimeout(() => {
+      setShufflePhase('levitating');
+
+      setTimeout(() => {
+        // Calculate and start the shuffle animation with pre-captured positions
+        performShuffle(cellPositions);
+        setShufflePhase('scrambling');
+      }, 400);
+    }, 300);
+  };
+
+  // Perform the shuffle using pre-captured cell positions (before transforms)
+  const performShuffle = (cellPositions: { x: number; y: number; width: number }[]) => {
+    const { grid } = gameState;
+
+    // Collect all tiles with their original positions
+    const originalTiles: { tile: { color: Color; id: string }; gridX: number; gridY: number; pxPos: { x: number; y: number }; cellSize: number }[] = [];
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        if (grid[y][x]) {
+          const cellIndex = y * GRID_SIZE + x;
+          const pos = cellPositions[cellIndex];
+          originalTiles.push({
+            tile: { color: grid[y][x]!.color, id: grid[y][x]!.id },
+            gridX: x,
+            gridY: y,
+            pxPos: { x: pos.x, y: pos.y },
+            cellSize: pos.width
+          });
+        }
+      }
+    }
+
+    if (originalTiles.length < 2) return;
+
+    // Create a copy of grid positions for shuffling
+    const gridPositions = originalTiles.map(t => ({ x: t.gridX, y: t.gridY }));
+
+    // Try shuffling until we get 1-3 matches (max 50 attempts)
+    let shuffledGridPositions: { x: number; y: number }[] = [];
+    let matchCount = 0;
+    let attempts = 0;
+
+    do {
+      // Fisher-Yates shuffle on positions
+      shuffledGridPositions = [...gridPositions];
+      for (let i = shuffledGridPositions.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffledGridPositions[i], shuffledGridPositions[j]] = [shuffledGridPositions[j], shuffledGridPositions[i]];
+      }
+
+      // Create test grid to check matches
+      const testGrid: (typeof grid[0][0])[][] = Array(GRID_SIZE).fill(null).map(() => Array(GRID_SIZE).fill(null));
+      originalTiles.forEach((t, i) => {
+        const newPos = shuffledGridPositions[i];
+        testGrid[newPos.y][newPos.x] = { color: t.tile.color, id: t.tile.id };
+      });
+
+      const matches = findMatchGroups(testGrid);
+      matchCount = matches.length;
+      attempts++;
+    } while ((matchCount < 1 || matchCount > 3) && attempts < 50);
+
+    // If no matches found after 50 attempts, force create one
+    if (matchCount === 0) {
+      // Group tiles by color
+      const colorGroups: Map<Color, number[]> = new Map();
+      originalTiles.forEach((t, i) => {
+        const color = t.tile.color;
+        if (!colorGroups.has(color)) colorGroups.set(color, []);
+        colorGroups.get(color)!.push(i);
+      });
+
+      // Find a color with at least 3 tiles
+      let targetColor: Color | null = null;
+      let targetIndices: number[] = [];
+      for (const [color, indices] of colorGroups) {
+        if (indices.length >= 3) {
+          targetColor = color;
+          targetIndices = indices.slice(0, 3);
+          break;
+        }
+      }
+
+      // If we have 3+ tiles of same color, force them adjacent
+      if (targetColor && targetIndices.length >= 3) {
+        // Try to find a horizontal or vertical line of 3 positions
+        let adjacentPositions: { x: number; y: number }[] = [];
+
+        // First, try to use existing positions and swap to make them adjacent
+        const pos0 = shuffledGridPositions[targetIndices[0]];
+
+        // Look for 2 adjacent positions to pos0
+        const neighbors = [
+          [{ x: pos0.x + 1, y: pos0.y }, { x: pos0.x + 2, y: pos0.y }], // right
+          [{ x: pos0.x - 1, y: pos0.y }, { x: pos0.x - 2, y: pos0.y }], // left
+          [{ x: pos0.x, y: pos0.y + 1 }, { x: pos0.x, y: pos0.y + 2 }], // down
+          [{ x: pos0.x, y: pos0.y - 1 }, { x: pos0.x, y: pos0.y - 2 }], // up
+        ];
+
+        for (const [n1, n2] of neighbors) {
+          if (n1.x >= 0 && n1.x < GRID_SIZE && n1.y >= 0 && n1.y < GRID_SIZE &&
+              n2.x >= 0 && n2.x < GRID_SIZE && n2.y >= 0 && n2.y < GRID_SIZE) {
+            adjacentPositions = [pos0, n1, n2];
+            break;
+          }
+        }
+
+        if (adjacentPositions.length === 3) {
+          // Move our 3 same-color tiles to adjacent positions
+          // Find which tiles are currently assigned to those adjacent positions
+          const idx1 = shuffledGridPositions.findIndex(p => p.x === adjacentPositions[1].x && p.y === adjacentPositions[1].y);
+          const idx2 = shuffledGridPositions.findIndex(p => p.x === adjacentPositions[2].x && p.y === adjacentPositions[2].y);
+
+          // Swap tile at targetIndices[1] with tile at adjacentPositions[1]
+          if (idx1 !== -1 && idx1 !== targetIndices[1]) {
+            const temp = shuffledGridPositions[targetIndices[1]];
+            shuffledGridPositions[targetIndices[1]] = adjacentPositions[1];
+            shuffledGridPositions[idx1] = temp;
+          } else if (idx1 === -1) {
+            // Position is empty, just assign directly
+            shuffledGridPositions[targetIndices[1]] = adjacentPositions[1];
+          }
+
+          // Swap tile at targetIndices[2] with tile at adjacentPositions[2]
+          const newIdx2 = shuffledGridPositions.findIndex(p => p.x === adjacentPositions[2].x && p.y === adjacentPositions[2].y);
+          if (newIdx2 !== -1 && newIdx2 !== targetIndices[2]) {
+            const temp = shuffledGridPositions[targetIndices[2]];
+            shuffledGridPositions[targetIndices[2]] = adjacentPositions[2];
+            shuffledGridPositions[newIdx2] = temp;
+          } else if (newIdx2 === -1) {
+            shuffledGridPositions[targetIndices[2]] = adjacentPositions[2];
+          }
+        }
+      }
+    }
+
+    // Create animation data with PIXEL positions read from DOM
+    const animations = originalTiles.map((t, i) => {
+      const targetGridPos = shuffledGridPositions[i];
+      const targetCellIndex = targetGridPos.y * GRID_SIZE + targetGridPos.x;
+      const targetPxPos = cellPositions[targetCellIndex];
+
+      return {
+        tile: t.tile,
+        fromPx: t.pxPos,
+        toPx: { x: targetPxPos.x, y: targetPxPos.y },
+        progress: 0,
+        cellSize: t.cellSize
+      };
+    });
+
+    setShuffleAnimations(animations);
+
+    // Start animation loop
+    const animationDuration = 800; // ms
+    const startTime = Date.now();
+
+    const animateFrame = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / animationDuration, 1);
+
+      // Ease out cubic for smooth deceleration
+      const easedProgress = 1 - Math.pow(1 - progress, 3);
+
+      setShuffleAnimations(prev => prev.map(a => ({ ...a, progress: easedProgress })));
+
+      if (progress < 1) {
+        requestAnimationFrame(animateFrame);
+      } else {
+        // Animation complete - update grid and transition to landing
+        const newGrid: (typeof grid[0][0])[][] = Array(GRID_SIZE).fill(null).map(() => Array(GRID_SIZE).fill(null));
+        originalTiles.forEach((t, i) => {
+          const newPos = shuffledGridPositions[i];
+          newGrid[newPos.y][newPos.x] = { color: t.tile.color, id: `shuffle-${Date.now()}-${i}` };
+        });
+
+        // Update grid, remove flying tiles and transition to landing
+        setGameState(prev => ({ ...prev, grid: newGrid }));
+        setShuffleAnimations([]);
+        setShufflePhase('landing');
+
+        // End landing and process matches with the new grid directly
+        setTimeout(() => {
+          setShufflePhase(null);
+          processShuffleMatches(newGrid);
+        }, 300);
+      }
+    };
+
+    requestAnimationFrame(animateFrame);
+  };
+
+  // Process matches after shuffle - takes the new grid directly to avoid closure issues
+  const processShuffleMatches = (newGrid: (TileData | null)[][]) => {
+    const matchGroups = findMatchGroups(newGrid);
+    if (matchGroups.length === 0) return;
+
+    // Collect all cleared points
+    const pointsToClear: { x: number; y: number; color: Color }[] = [];
+    matchGroups.forEach(group => {
+      group.forEach(p => {
+        if (!pointsToClear.some(cp => cp.x === p.x && cp.y === p.y)) {
+          const tile = newGrid[p.y][p.x];
+          if (tile) {
+            pointsToClear.push({ x: p.x, y: p.y, color: tile.color });
+          }
+        }
+      });
+    });
+
+    // Calculate score
+    const comboMultiplier = 1 + (gameState.combo - 1) * 0.1;
+    const totalScore = Math.round(pointsToClear.length * 15 * comboMultiplier);
+
+    // Count colors for objectives
+    const colorCounts: Record<string, number> = {};
+    pointsToClear.forEach(p => {
+      colorCounts[p.color] = (colorCounts[p.color] || 0) + 1;
+    });
+
+    // Get matching IDs
+    const matchingIds = pointsToClear.map(p => newGrid[p.y][p.x]?.id).filter(Boolean) as string[];
+
+    // Spawn particles IMMEDIATELY (like piece placement does)
+    if (boardRef.current) {
+      const rect = boardRef.current.getBoundingClientRect();
+      const cellSize = rect.width / GRID_SIZE;
+
+      pointsToClear.forEach(p => {
+        const cellCenterX = rect.left + (p.x * cellSize) + (cellSize / 2);
+        const cellCenterY = rect.top + (p.y * cellSize) + (cellSize / 2);
+        spawnParticles(cellCenterX, cellCenterY, p.color, 6);
+      });
+
+      // Floating score text
+      const avgX = pointsToClear.reduce((acc, p) => acc + p.x, 0) / pointsToClear.length;
+      const avgY = pointsToClear.reduce((acc, p) => acc + p.y, 0) / pointsToClear.length;
+      spawnFloatingText(rect.left + avgX * cellSize, rect.top + avgY * cellSize, `+${totalScore}`);
+    }
+
+    triggerShake();
+
+    // Update state with clearingTiles for animation
+    setGameState(prev => {
+      const newObjectives = prev.objectives.map(obj => ({
+        ...obj,
+        current: Math.min(obj.target, obj.current + (colorCounts[obj.color] || 0))
+      }));
+      const isLevelComplete = newObjectives.every(obj => obj.current >= obj.target);
+
+      return {
+        ...prev,
+        grid: newGrid,
+        score: prev.score + totalScore,
+        clearingTiles: matchingIds,
+        objectives: newObjectives,
+        levelComplete: isLevelComplete,
+        combo: prev.combo + 1
+      };
+    });
+
+    // Remove tiles after animation
+    setTimeout(() => {
+      setGameState(prev => {
+        const finalGrid = prev.grid.map(row => [...row]);
+        pointsToClear.forEach(p => {
+          finalGrid[p.y][p.x] = null;
+        });
+
+        if (isGridEmpty(finalGrid, prev.boosters)) {
+          setTimeout(() => handleAllClear(), 100);
+          return { ...prev, grid: finalGrid, clearingTiles: [] };
+        }
+
+        const lost = !prev.levelComplete && isGameOver(finalGrid, prev.hand);
+        return { ...prev, grid: finalGrid, clearingTiles: [], gameOver: lost };
+      });
+    }, 400);
   };
 
   const startDragging = (e: React.PointerEvent, index: number) => {
@@ -898,22 +1174,6 @@ const App: React.FC = () => {
     lastDragPos.current = { x: e.clientX, y: e.clientY, time: Date.now() };
 
     setDragPosition({ x: e.clientX, y: e.clientY });
-
-    // Check trash zone
-    let isOverTrash = false;
-    if (trashRef.current) {
-      const rect = trashRef.current.getBoundingClientRect();
-      if (e.clientX >= rect.left && e.clientX <= rect.right &&
-          e.clientY >= rect.top && e.clientY <= rect.bottom) {
-        isOverTrash = true;
-      }
-    }
-    setHoveredPowerup(isOverTrash ? 'trash' : null);
-
-    if (isOverTrash) {
-      setHoveredCell(null);
-      return;
-    }
 
     if (boardRef.current) {
       const rect = boardRef.current.getBoundingClientRect();
@@ -957,19 +1217,11 @@ const App: React.FC = () => {
     const pieceIndex = gameState.selectedPieceIndex;
     const piece = gameState.hand[pieceIndex];
 
-    if (hoveredPowerup === 'trash') {
-      handlePowerupActivation();
-      setDragPosition(null);
-      setHoveredCell(null);
-      setHoveredPowerup(null);
-      setDragVelocity({ x: 0, y: 0 });
-      lastDragPos.current = null;
-    } else if (hoveredCell && piece && canPlacePiece(gameState.grid, piece, hoveredCell.x, hoveredCell.y)) {
+    if (hoveredCell && piece && canPlacePiece(gameState.grid, piece, hoveredCell.x, hoveredCell.y)) {
       placePieceAt(hoveredCell.x, hoveredCell.y);
       setDragPosition(null);
       setHoveredCell(null);
-      setHoveredPowerup(null);
-      setDragVelocity({ x: 0, y: 0 });
+            setDragVelocity({ x: 0, y: 0 });
       lastDragPos.current = null;
     } else if (piece && dragPosition) {
       // Invalid drop - animate piece returning to box
@@ -992,15 +1244,13 @@ const App: React.FC = () => {
       setGameState(prev => ({ ...prev, selectedPieceIndex: null }));
       setDragPosition(null);
       setHoveredCell(null);
-      setHoveredPowerup(null);
-      setDragVelocity({ x: 0, y: 0 });
+            setDragVelocity({ x: 0, y: 0 });
       lastDragPos.current = null;
     } else {
       setGameState(prev => ({ ...prev, selectedPieceIndex: null }));
       setDragPosition(null);
       setHoveredCell(null);
-      setHoveredPowerup(null);
-      setDragVelocity({ x: 0, y: 0 });
+            setDragVelocity({ x: 0, y: 0 });
       lastDragPos.current = null;
     }
   };
@@ -1553,7 +1803,8 @@ const App: React.FC = () => {
           backgroundImage: `url(${UI_ASSETS.CONTAINER})`,
           backgroundSize: 'contain',
           backgroundPosition: 'center',
-          backgroundRepeat: 'no-repeat'
+          backgroundRepeat: 'no-repeat',
+          zIndex: shufflePhase ? 40 : undefined
         }}
       >
         <div className="board-grid w-full h-full gap-0.5">
@@ -1586,7 +1837,8 @@ const App: React.FC = () => {
                   bgColor = cellColor;
                   bgImage = 'none';
                 }
-                cellOpacity = 1;
+                // Hide cells only during scrambling phase (flying tiles visible)
+                cellOpacity = shufflePhase === 'scrambling' ? 0 : 1;
               } else if (ghost) {
                 if (ghostHasImage) {
                   bgColor = 'transparent';
@@ -1598,24 +1850,43 @@ const App: React.FC = () => {
                 cellOpacity = ghost.isValid ? 0.7 : 0.15;
               }
 
+              // Shuffle animation transforms
+              const getShuffleTransform = () => {
+                if (!cell) return '';
+                if (shufflePhase === 'levitating') return 'scale(1.1) translateY(-4px)';
+                // During scrambling, cells are hidden (flying tiles shown instead)
+                if (shufflePhase === 'scrambling') return 'scale(1)';
+                if (shufflePhase === 'landing') return 'scale(1) translateY(0)';
+                return '';
+              };
+
               return (
                 <div
                   key={`${x}-${y}`}
-                  onClick={() => booster && activateBooster(booster)}
+                  onClick={() => booster && !shufflePhase && activateBooster(booster)}
                   className={`
-                    relative transition-all duration-200
-                    ${booster ? 'cursor-pointer active:scale-95' : ''}
+                    relative
+                    ${booster && !shufflePhase ? 'cursor-pointer active:scale-95' : ''}
+                    ${shufflePhase === 'levitating' && cell ? 'z-20 shadow-lg' : ''}
                   `}
                   style={{
                     backgroundColor: bgColor,
                     backgroundImage: bgImage,
                     backgroundSize: '100% 100%',
+                    transition: shufflePhase ? 'transform 0.3s, box-shadow 0.3s' : 'all 0.2s',
                     backgroundPosition: 'center',
                     backgroundRepeat: 'no-repeat',
                     opacity: cellOpacity,
                     transform: gameState.clearingTiles.includes(cell?.id || '')
                       ? 'scale(0) rotate(90deg)'
-                      : (ghost && ghost.isValid ? 'scale(0.95)' : 'scale(1)')
+                      : shufflePhase && cell
+                      ? getShuffleTransform()
+                      : (ghost && ghost.isValid ? 'scale(0.95)' : 'scale(1)'),
+                    boxShadow: cell
+                      ? (shufflePhase === 'levitating'
+                        ? '0 8px 20px rgba(0,0,0,0.5)'
+                        : '0 4px 8px rgba(0,0,0,0.3)')
+                      : undefined
                   }}
                 >
                   {/* Affected area indicator - shows during booster activation with fade */}
@@ -1695,6 +1966,50 @@ const App: React.FC = () => {
             })
           )}
         </div>
+
+        {/* Flying tiles during shuffle */}
+        {shuffleAnimations.length > 0 && (
+          <div className="absolute inset-0 pointer-events-none z-40">
+            {shuffleAnimations.map((anim, i) => {
+              // Cap movement progress at 1 (tiles stay at destination)
+              const moveProgress = Math.min(anim.progress, 1);
+
+              // Interpolate position with an arc using actual pixel positions
+              const dx = anim.toPx.x - anim.fromPx.x;
+              const dy = anim.toPx.y - anim.fromPx.y;
+              const distance = Math.sqrt(dx * dx + dy * dy);
+
+              // Add arc height based on distance (more distance = higher arc)
+              const arcHeight = Math.min(distance * 0.3, 80);
+              const arcOffset = Math.sin(moveProgress * Math.PI) * arcHeight;
+
+              const currentX = anim.fromPx.x + dx * moveProgress;
+              const currentY = anim.fromPx.y + dy * moveProgress - arcOffset;
+
+              return (
+                <div
+                  key={`fly-${anim.tile.id}-${i}`}
+                  className="absolute"
+                  style={{
+                    width: anim.cellSize,
+                    height: anim.cellSize,
+                    left: currentX,
+                    top: currentY,
+                    backgroundImage: isIconPath(anim.tile.color) ? `url(${anim.tile.color})` : 'none',
+                    backgroundColor: isIconPath(anim.tile.color) ? 'transparent' : anim.tile.color,
+                    backgroundSize: '100% 100%',
+                    backgroundPosition: 'center',
+                    backgroundRepeat: 'no-repeat',
+                    boxShadow: moveProgress < 0.7
+                      ? '0 6px 20px rgba(0,0,0,0.4)'
+                      : `0 ${6 - 2 * ((moveProgress - 0.7) / 0.3)}px ${20 - 12 * ((moveProgress - 0.7) / 0.3)}px rgba(0,0,0,${0.4 - 0.1 * ((moveProgress - 0.7) / 0.3)})`,
+                    zIndex: 40
+                  }}
+                />
+              );
+            })}
+          </div>
+        )}
 
         {/* ALL CLEAR Screen */}
         {showAllClear && (
@@ -1826,13 +2141,16 @@ const App: React.FC = () => {
               <div
                 key={piece?.id || `empty-${index}`}
                 ref={el => pieceRefs.current[index] = el}
+                onClick={() => trashSelectMode && piece && handleTrashSelect(index)}
                 className={`
                   flex items-center justify-center
-                  relative transition-opacity duration-300
+                  relative transition-all duration-300
                   ${piece === null && fadingBoxIndex?.index !== index ? 'opacity-0 pointer-events-none' : ''}
                   ${fadingBoxIndex?.index === index && fadingBoxIndex.fading ? 'opacity-0' : ''}
                   ${fadingInPieces ? 'opacity-0' : ''}
                   ${trashingPieceIndex === index ? 'piece-trashing' : ''}
+                  ${trashSelectMode && piece ? 'cursor-pointer z-50 hover:scale-110 hover:brightness-125' : ''}
+                  ${trashSelectMode && !piece ? 'opacity-30' : ''}
                 `}
                 style={{
                   backgroundImage: `url(${UI_ASSETS.CONTAINER_NEXT_PIECE})`,
@@ -1845,8 +2163,8 @@ const App: React.FC = () => {
               >
                 {/* Piece (draggable area) */}
                 <div
-                  onPointerDown={(e) => startDragging(e, index)}
-                  className="flex items-center justify-center p-1 touch-none cursor-grab w-full h-full"
+                  onPointerDown={(e) => !trashSelectMode && startDragging(e, index)}
+                  className={`flex items-center justify-center p-1 w-full h-full ${trashSelectMode ? '' : 'touch-none cursor-grab'}`}
                   style={{ transform: 'scale(0.95)' }}
                 >
                   {piece && gameState.selectedPieceIndex !== index && returningPiece?.index !== index && (
@@ -1858,29 +2176,62 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        {/* Trash Zone */}
-        <div
-          ref={trashRef}
-          className={`
-            h-16 flex items-center justify-center gap-2 relative mt-6
-            transition-all duration-200
-            ${hoveredPowerup === 'trash' ? 'scale-[1.02]' : ''}
-          `}
-          style={{
-            backgroundImage: `url(${UI_ASSETS.TRASH_BUTTON})`,
-            backgroundSize: '100% 100%',
-            backgroundPosition: 'center',
-            backgroundRepeat: 'no-repeat'
-          }}
-        >
-          <i className={`fa-solid fa-trash text-lg ${trashUses > 0 ? 'text-red-400' : 'text-slate-600'}`}></i>
-          <span className="text-xs text-slate-500 font-bold uppercase">Drop to discard</span>
-          {/* Uses indicator */}
-          <div className={`absolute right-3 px-2 py-0.5 rounded-full text-[10px] font-bold
-            ${trashUses > 0 ? 'bg-red-500/20 text-red-400' : 'bg-slate-800 text-slate-500'}`}>
-            {trashUses > 0 ? `${trashUses} free` : '📺 ad'}
-          </div>
+        {/* Powerup Buttons */}
+        <div className="flex justify-center gap-6 mt-4">
+          {/* Shuffle Button */}
+          <button
+            onClick={() => shuffleUses > 0 && !shufflePhase && !trashSelectMode && activateShuffle()}
+            disabled={shuffleUses <= 0 || !!shufflePhase || trashSelectMode}
+            className={`
+              w-16 h-16 rounded-full flex items-center justify-center relative
+              transition-all duration-200 active:scale-95
+              ${shuffleUses > 0 && !shufflePhase ? 'bg-gradient-to-br from-purple-500 to-indigo-600 shadow-lg shadow-purple-500/30' : 'bg-slate-700 opacity-50'}
+            `}
+          >
+            <i className="fa-solid fa-shuffle text-2xl text-white"></i>
+            {shuffleUses > 0 && (
+              <div className="absolute -top-1 -right-1 w-5 h-5 bg-yellow-400 rounded-full flex items-center justify-center text-[10px] font-bold text-black">
+                {shuffleUses}
+              </div>
+            )}
+          </button>
+
+          {/* Trash Button */}
+          <button
+            onClick={() => trashUses > 0 && !shufflePhase && !trashSelectMode && setTrashSelectMode(true)}
+            disabled={trashUses <= 0 || !!shufflePhase || trashSelectMode}
+            className={`
+              w-16 h-16 rounded-full flex items-center justify-center relative
+              transition-all duration-200 active:scale-95
+              ${trashUses > 0 && !trashSelectMode ? 'bg-gradient-to-br from-red-500 to-orange-600 shadow-lg shadow-red-500/30' : 'bg-slate-700 opacity-50'}
+            `}
+          >
+            <i className="fa-solid fa-trash text-2xl text-white"></i>
+            {trashUses > 0 && (
+              <div className="absolute -top-1 -right-1 w-5 h-5 bg-yellow-400 rounded-full flex items-center justify-center text-[10px] font-bold text-black">
+                {trashUses}
+              </div>
+            )}
+          </button>
         </div>
+
+        {/* Trash Select Overlay */}
+        {trashSelectMode && (
+          <div
+            className="fixed inset-0 bg-black/70 z-40 flex items-center justify-center"
+            onClick={() => setTrashSelectMode(false)}
+          >
+            <div className="text-center text-white pointer-events-none">
+              <p className="text-xl font-bold mb-2">Select a piece to discard</p>
+              <p className="text-sm text-slate-400">Tap a piece box or anywhere to cancel</p>
+            </div>
+          </div>
+        )}
+
+        {/* Shuffle Overlay */}
+        {shufflePhase && (
+          <div className="fixed inset-0 bg-black/50 z-30 pointer-events-none" />
+        )}
       </div>
 
       {/* Ad Popup Modal */}
