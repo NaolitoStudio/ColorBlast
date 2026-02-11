@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { GameState, PieceData, Point, Color, LevelObjective, Booster, BoosterType } from './types';
-import { createRandomGrid, generatePiece, generateValidHand, canPlacePiece, findMatchGroups, findGroupCenter, getBombExplosionPoints, isGameOver, calculateScore, initializeObjectives, getAdjacentToMatches, addRandomBlocks, AddedBlock } from './utils/gameLogic';
+import { createRandomGrid, generatePiece, generateValidHand, canPlacePiece, findMatchGroups, findGroupCenter, getBombExplosionPoints, isGameOver, calculateScore, initializeObjectives, getAdjacentToMatches, addRandomBlocks, AddedBlock, getColorsForLevel } from './utils/gameLogic';
 import { GRID_SIZE, getLevelConfig } from './constants';
 import { ICONS, UI_ASSETS } from './assets';
 
@@ -98,6 +98,8 @@ const App: React.FC = () => {
   const [shuffleUses, setShuffleUses] = useState(3);
   const [deleteBlockUses, setDeleteBlockUses] = useState(3);
   const [deleteBlockMode, setDeleteBlockMode] = useState(false);
+  const [wildcardUses, setWildcardUses] = useState(3);
+  const [wildcardMode, setWildcardMode] = useState(false);
   const [showAdPopup, setShowAdPopup] = useState(false);
   const [pendingTrashIndex, setPendingTrashIndex] = useState<number | null>(null);
   const [watchingAd, setWatchingAd] = useState(false);
@@ -577,6 +579,7 @@ const App: React.FC = () => {
     setTrashUses(1);
     setShuffleUses(3);
     setDeleteBlockUses(3);
+    setWildcardUses(3);
   };
 
   const handleNextLevel = () => {
@@ -606,6 +609,7 @@ const App: React.FC = () => {
     setTrashUses(1);
     setShuffleUses(3);
     setDeleteBlockUses(3);
+    setWildcardUses(3);
   };
 
   // Handle deleting a single block from the board
@@ -658,6 +662,69 @@ const App: React.FC = () => {
         };
       });
     }, 200);
+  };
+
+  // Handle wildcard: change block color to create the best possible match
+  const handleWildcard = (x: number, y: number) => {
+    const tile = gameState.grid[y][x];
+    if (!tile) return;
+
+    setWildcardMode(false);
+    setWildcardUses(prev => prev - 1);
+
+    const levelColors = getColorsForLevel(gameState.level);
+    let bestColor = tile.color;
+    let bestMatchSize = 0;
+
+    // Try each color and find which creates the largest match
+    for (const testColor of levelColors) {
+      if (testColor === tile.color) continue;
+
+      // Create a test grid with the new color
+      const testGrid = gameState.grid.map(row => [...row]);
+      testGrid[y][x] = { ...tile, color: testColor };
+
+      // Find matches in the test grid
+      const matches = findMatchGroups(testGrid);
+
+      // Count tiles in matches that include this cell
+      let matchSize = 0;
+      for (const group of matches) {
+        if (group.some(p => p.x === x && p.y === y)) {
+          matchSize += group.length;
+        }
+      }
+
+      if (matchSize > bestMatchSize) {
+        bestMatchSize = matchSize;
+        bestColor = testColor;
+      }
+    }
+
+    // If no match found, just pick a random different color
+    if (bestMatchSize === 0) {
+      const otherColors = levelColors.filter(c => c !== tile.color);
+      bestColor = otherColors[Math.floor(Math.random() * otherColors.length)];
+    }
+
+    // Spawn particles at the tile position
+    if (boardRef.current) {
+      const rect = boardRef.current.getBoundingClientRect();
+      const cellSize = rect.width / GRID_SIZE;
+      const cellCenterX = rect.left + (x * cellSize) + (cellSize / 2);
+      const cellCenterY = rect.top + (y * cellSize) + (cellSize / 2);
+      spawnParticles(cellCenterX, cellCenterY, bestColor, 6);
+    }
+
+    // Update the tile color
+    setGameState(prev => {
+      const newGrid = prev.grid.map(row => [...row]);
+      newGrid[y][x] = { ...tile, color: bestColor };
+      return {
+        ...prev,
+        grid: newGrid
+      };
+    });
   };
 
   // Handle clicking on a booster to activate it
@@ -2272,14 +2339,17 @@ const App: React.FC = () => {
                   onClick={() => {
                     if (deleteBlockMode && cell && !booster) {
                       handleDeleteBlock(x, y);
-                    } else if (booster && !shufflePhase && !deleteBlockMode) {
+                    } else if (wildcardMode && cell && !booster) {
+                      handleWildcard(x, y);
+                    } else if (booster && !shufflePhase && !deleteBlockMode && !wildcardMode) {
                       activateBooster(booster);
                     }
                   }}
                   className={`
                     relative
-                    ${booster && !shufflePhase && !deleteBlockMode ? 'cursor-pointer active:scale-95' : ''}
+                    ${booster && !shufflePhase && !deleteBlockMode && !wildcardMode ? 'cursor-pointer active:scale-95' : ''}
                     ${deleteBlockMode && cell && !booster ? 'cursor-pointer z-50 hover:scale-110 hover:brightness-125' : ''}
+                    ${wildcardMode && cell && !booster ? 'cursor-pointer z-50 hover:scale-110 hover:brightness-125' : ''}
                     ${shufflePhase === 'levitating' && cell ? 'z-20 shadow-lg' : ''}
                   `}
                   style={{
@@ -2658,12 +2728,12 @@ const App: React.FC = () => {
       <div className="flex justify-center gap-4 sm:gap-6 pb-4 pt-2">
         {/* Delete Block Button */}
         <button
-          onClick={() => deleteBlockUses > 0 && !shufflePhase && !trashSelectMode && !deleteBlockMode && setDeleteBlockMode(true)}
-          disabled={deleteBlockUses <= 0 || !!shufflePhase || trashSelectMode || deleteBlockMode}
+          onClick={() => deleteBlockUses > 0 && !shufflePhase && !trashSelectMode && !deleteBlockMode && !wildcardMode && setDeleteBlockMode(true)}
+          disabled={deleteBlockUses <= 0 || !!shufflePhase || trashSelectMode || deleteBlockMode || wildcardMode}
           className={`
             w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center relative
             transition-all duration-200 active:scale-95
-            ${deleteBlockUses > 0 && !deleteBlockMode ? 'bg-gradient-to-br from-cyan-500 to-blue-600 shadow-lg shadow-cyan-500/30' : 'bg-slate-700 opacity-50'}
+            ${deleteBlockUses > 0 && !deleteBlockMode && !wildcardMode ? 'bg-gradient-to-br from-cyan-500 to-blue-600 shadow-lg shadow-cyan-500/30' : 'bg-slate-700 opacity-50'}
           `}
         >
           <i className="fa-solid fa-crosshairs text-lg sm:text-xl md:text-2xl text-white"></i>
@@ -2674,14 +2744,32 @@ const App: React.FC = () => {
           )}
         </button>
 
-        {/* Shuffle Button */}
+        {/* Wildcard Button */}
         <button
-          onClick={() => shuffleUses > 0 && !shufflePhase && !trashSelectMode && !deleteBlockMode && activateShuffle()}
-          disabled={shuffleUses <= 0 || !!shufflePhase || trashSelectMode || deleteBlockMode}
+          onClick={() => wildcardUses > 0 && !shufflePhase && !trashSelectMode && !deleteBlockMode && !wildcardMode && setWildcardMode(true)}
+          disabled={wildcardUses <= 0 || !!shufflePhase || trashSelectMode || deleteBlockMode || wildcardMode}
           className={`
             w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center relative
             transition-all duration-200 active:scale-95
-            ${shuffleUses > 0 && !shufflePhase && !deleteBlockMode ? 'bg-gradient-to-br from-purple-500 to-indigo-600 shadow-lg shadow-purple-500/30' : 'bg-slate-700 opacity-50'}
+            ${wildcardUses > 0 && !wildcardMode && !deleteBlockMode ? 'bg-gradient-to-br from-yellow-500 to-amber-600 shadow-lg shadow-yellow-500/30' : 'bg-slate-700 opacity-50'}
+          `}
+        >
+          <i className="fa-solid fa-wand-magic-sparkles text-lg sm:text-xl md:text-2xl text-white"></i>
+          {wildcardUses > 0 && (
+            <div className="absolute -top-1 -right-1 w-4 h-4 sm:w-5 sm:h-5 bg-yellow-400 rounded-full flex items-center justify-center text-[8px] sm:text-[10px] font-bold text-black">
+              {wildcardUses}
+            </div>
+          )}
+        </button>
+
+        {/* Shuffle Button */}
+        <button
+          onClick={() => shuffleUses > 0 && !shufflePhase && !trashSelectMode && !deleteBlockMode && !wildcardMode && activateShuffle()}
+          disabled={shuffleUses <= 0 || !!shufflePhase || trashSelectMode || deleteBlockMode || wildcardMode}
+          className={`
+            w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center relative
+            transition-all duration-200 active:scale-95
+            ${shuffleUses > 0 && !shufflePhase && !deleteBlockMode && !wildcardMode ? 'bg-gradient-to-br from-purple-500 to-indigo-600 shadow-lg shadow-purple-500/30' : 'bg-slate-700 opacity-50'}
           `}
         >
           <i className="fa-solid fa-shuffle text-lg sm:text-xl md:text-2xl text-white"></i>
@@ -2694,12 +2782,12 @@ const App: React.FC = () => {
 
         {/* Trash Button */}
         <button
-          onClick={() => trashUses > 0 && !shufflePhase && !trashSelectMode && !deleteBlockMode && setTrashSelectMode(true)}
-          disabled={trashUses <= 0 || !!shufflePhase || trashSelectMode || deleteBlockMode}
+          onClick={() => trashUses > 0 && !shufflePhase && !trashSelectMode && !deleteBlockMode && !wildcardMode && setTrashSelectMode(true)}
+          disabled={trashUses <= 0 || !!shufflePhase || trashSelectMode || deleteBlockMode || wildcardMode}
           className={`
             w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center relative
             transition-all duration-200 active:scale-95
-            ${trashUses > 0 && !trashSelectMode && !deleteBlockMode ? 'bg-gradient-to-br from-red-500 to-orange-600 shadow-lg shadow-red-500/30' : 'bg-slate-700 opacity-50'}
+            ${trashUses > 0 && !trashSelectMode && !deleteBlockMode && !wildcardMode ? 'bg-gradient-to-br from-red-500 to-orange-600 shadow-lg shadow-red-500/30' : 'bg-slate-700 opacity-50'}
           `}
         >
           <i className="fa-solid fa-trash text-lg sm:text-xl md:text-2xl text-white"></i>
