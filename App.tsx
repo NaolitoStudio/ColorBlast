@@ -1,8 +1,15 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { GameState, PieceData, Point } from './types';
-import { createRandomGrid, generatePiece, canPlacePiece, findMatchGroups, isGameOver, calculateScore } from './utils/gameLogic';
-import { GRID_SIZE } from './constants';
+import { GameState, PieceData, Point, Color, LevelObjective, Booster, BoosterType } from './types';
+import { createRandomGrid, generatePiece, generateValidHand, canPlacePiece, findMatchGroups, findGroupCenter, getBombExplosionPoints, isGameOver, calculateScore, initializeObjectives, getAdjacentToMatches } from './utils/gameLogic';
+import { GRID_SIZE, getLevelConfig } from './constants';
+
+// Block images by color
+import orangeBlockImg from './Graphics/1770817203228-83afc8e6-c05d-4fff-b742-d6586f36ee10.jpg';
+
+const BLOCK_IMAGES: Record<string, string> = {
+  [Color.RED]: orangeBlockImg,
+};
 
 const DRAG_OFFSET_Y = 100; // How much the piece is lifted above the finger/cursor
 
@@ -41,16 +48,23 @@ interface FloatingText {
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(() => {
-    const initialHand = [generatePiece(), generatePiece(), generatePiece()];
+    const initialLevel = 1;
+    const levelConfig = getLevelConfig(initialLevel);
+    const initialGrid = createRandomGrid(levelConfig.gridFill, initialLevel);
+    const initialHand = generateValidHand(initialGrid, initialLevel);
     return {
-      grid: createRandomGrid(0.3), // 30% filled with random blocks
+      grid: initialGrid,
+      boosters: [],
       score: 0,
       highScore: Number(localStorage.getItem('highScore')) || 0,
       hand: initialHand,
       gameOver: false,
       selectedPieceIndex: null,
       clearingTiles: [],
-      combo: 1
+      combo: 1,
+      level: initialLevel,
+      objectives: initializeObjectives(initialLevel),
+      levelComplete: false
     };
   });
 
@@ -61,8 +75,23 @@ const App: React.FC = () => {
   const [particles, setParticles] = useState<Particle[]>([]);
   const [floatingTexts, setFloatingTexts] = useState<FloatingText[]>([]);
   const [isShaking, setIsShaking] = useState(false);
+  const [celebrating, setCelebrating] = useState(false);
+  const [showLevelPopup, setShowLevelPopup] = useState(false);
+  const [showAllClear, setShowAllClear] = useState(false);
+  const [affectedCells, setAffectedCells] = useState<Set<string>>(new Set());
+  const [affectedColor, setAffectedColor] = useState<string>('transparent');
+  const [hoveredPowerup, setHoveredPowerup] = useState<'trash' | null>(null);
+
+  // Powerup uses (reset each level)
+  const [trashUses, setTrashUses] = useState(1);
+  const [showAdPopup, setShowAdPopup] = useState(false);
+  const [pendingTrashIndex, setPendingTrashIndex] = useState<number | null>(null);
+  const [watchingAd, setWatchingAd] = useState(false);
+  const [trashingPieceIndex, setTrashingPieceIndex] = useState<number | null>(null);
 
   const boardRef = useRef<HTMLDivElement>(null);
+  const trashRef = useRef<HTMLDivElement>(null);
+  const pieceRefs = useRef<(HTMLDivElement | null)[]>([null, null, null]);
 
   // Animation Loop
   useEffect(() => {
@@ -102,6 +131,14 @@ const App: React.FC = () => {
     }
   }, [gameState.score, gameState.highScore]);
 
+  // Start celebration when level is complete
+  useEffect(() => {
+    if (gameState.levelComplete && !celebrating && !showLevelPopup) {
+      // Small delay before starting celebration
+      setTimeout(() => startCelebration(), 500);
+    }
+  }, [gameState.levelComplete]);
+
   const triggerShake = () => {
     setIsShaking(true);
     setTimeout(() => setIsShaking(false), 300);
@@ -140,27 +177,608 @@ const App: React.FC = () => {
     }]);
   };
 
+  // Check if grid is completely empty (no tiles and no boosters)
+  const isGridEmpty = (grid: (typeof gameState.grid), boosters: Booster[]): boolean => {
+    if (boosters.length > 0) return false;
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        if (grid[y][x] !== null) return false;
+      }
+    }
+    return true;
+  };
+
+  // Handle ALL CLEAR - regenerate grid if objectives not complete
+  const handleAllClear = () => {
+    setShowAllClear(true);
+    triggerShake();
+
+    // Spawn celebration particles across the board
+    if (boardRef.current) {
+      const rect = boardRef.current.getBoundingClientRect();
+      const colors = ['#ef4444', '#3b82f6', '#22c55e', '#eab308', '#a855f7', '#f97316'];
+      for (let i = 0; i < 50; i++) {
+        const x = rect.left + Math.random() * rect.width;
+        const y = rect.top + Math.random() * rect.height;
+        spawnParticles(x, y, colors[Math.floor(Math.random() * colors.length)], 3);
+      }
+    }
+
+    // Bonus score for ALL CLEAR
+    setGameState(prev => ({ ...prev, score: prev.score + 500 }));
+
+    setTimeout(() => {
+      setShowAllClear(false);
+
+      // Check if level complete, if not regenerate grid
+      setGameState(prev => {
+        if (prev.levelComplete) {
+          return prev; // Let level complete celebration handle it
+        }
+
+        // Regenerate grid with current level config
+        const levelConfig = getLevelConfig(prev.level);
+        const newGrid = createRandomGrid(levelConfig.gridFill, prev.level);
+        const newHand = generateValidHand(newGrid, prev.level);
+
+        return {
+          ...prev,
+          grid: newGrid,
+          boosters: [],
+          hand: newHand,
+          combo: prev.combo + 1 // Bonus combo for all clear
+        };
+      });
+    }, 1500);
+  };
+
+  // Get cells that would be affected by a booster
+  const getBoosterAffectedCells = (booster: Booster): Set<string> => {
+    const affected = new Set<string>();
+    const grid = gameState.grid;
+
+    if (booster.type === 'line_bomb') {
+      // Entire row and column
+      for (let i = 0; i < GRID_SIZE; i++) {
+        affected.add(`${i},${booster.y}`); // Row
+        affected.add(`${booster.x},${i}`); // Column
+      }
+    } else if (booster.type === 'bomb') {
+      // 1 layer around (8 neighbors + center)
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = booster.x + dx;
+          const ny = booster.y + dy;
+          if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE) {
+            affected.add(`${nx},${ny}`);
+          }
+        }
+      }
+    } else if (booster.type === 'color_ball') {
+      // All tiles of the same color
+      for (let y = 0; y < GRID_SIZE; y++) {
+        for (let x = 0; x < GRID_SIZE; x++) {
+          if (grid[y][x]?.color === booster.color) {
+            affected.add(`${x},${y}`);
+          }
+        }
+      }
+      // Also include the booster position
+      affected.add(`${booster.x},${booster.y}`);
+    }
+
+    return affected;
+  };
+
+  // Chain explosion celebration when level is complete
+  const startCelebration = () => {
+    setCelebrating(true);
+
+    const boosters = [...gameState.boosters];
+    const boosterDelay = 400; // ms between booster activations
+
+    // Phase 1: Activate all boosters first
+    if (boosters.length > 0) {
+      boosters.forEach((booster, index) => {
+        setTimeout(() => {
+          // Trigger booster explosion visually
+          celebrationBoosterExplosion(booster);
+
+          // After last booster, start phase 2
+          if (index === boosters.length - 1) {
+            setTimeout(() => {
+              explodeRemainingBlocks();
+            }, 500);
+          }
+        }, index * boosterDelay);
+      });
+    } else {
+      // No boosters, go directly to phase 2
+      explodeRemainingBlocks();
+    }
+  };
+
+  // Explode a booster during celebration (simplified version)
+  const celebrationBoosterExplosion = (booster: Booster) => {
+    // Use getBoosterAffectedCells to get the affected points
+    const affectedSet = getBoosterAffectedCells(booster);
+    const affectedPoints: Point[] = Array.from(affectedSet).map(key => {
+      const [x, y] = key.split(',').map(Number);
+      return { x, y };
+    });
+
+    // Show indicator
+    const previewCells = new Set(affectedPoints.map(p => `${p.x},${p.y}`));
+    const previewColor = booster.type === 'line_bomb' ? 'rgba(59, 130, 246, 0.3)'
+      : booster.type === 'bomb' ? 'rgba(249, 115, 22, 0.3)'
+      : 'rgba(168, 85, 247, 0.3)';
+
+    setAffectedCells(previewCells);
+    setAffectedColor(previewColor);
+
+    // Spawn particles and clear affected cells
+    if (boardRef.current) {
+      const rect = boardRef.current.getBoundingClientRect();
+      const cellSize = rect.width / GRID_SIZE;
+
+      setGameState(prev => {
+        const newGrid = prev.grid.map(row => [...row]);
+        let scoreBonus = 0;
+
+        affectedPoints.forEach(p => {
+          const cell = newGrid[p.y]?.[p.x];
+          if (cell) {
+            const cellCenterX = rect.left + (p.x * cellSize) + (cellSize / 2);
+            const cellCenterY = rect.top + (p.y * cellSize) + (cellSize / 2);
+            spawnParticles(cellCenterX, cellCenterY, cell.color, 6);
+            newGrid[p.y][p.x] = null;
+            scoreBonus += 10;
+          }
+        });
+
+        // Remove the booster
+        const newBoosters = prev.boosters.filter(b => b.id !== booster.id);
+
+        return {
+          ...prev,
+          grid: newGrid,
+          boosters: newBoosters,
+          score: prev.score + scoreBonus
+        };
+      });
+    }
+
+    triggerShake();
+
+    // Clear indicator
+    setTimeout(() => {
+      setAffectedCells(new Set());
+      setAffectedColor('transparent');
+    }, 300);
+  };
+
+  // Phase 2: Explode remaining blocks one by one
+  const explodeRemainingBlocks = () => {
+    setGameState(prev => {
+      const blocks: { x: number; y: number; color: string; id: string }[] = [];
+      prev.grid.forEach((row, y) => {
+        row.forEach((cell, x) => {
+          if (cell) {
+            blocks.push({ x, y, color: cell.color, id: cell.id });
+          }
+        });
+      });
+
+      // Shuffle blocks for random explosion order
+      const shuffled = blocks.sort(() => Math.random() - 0.5);
+
+      if (shuffled.length === 0) {
+        // No blocks left, show popup
+        setTimeout(() => {
+          setCelebrating(false);
+          setShowLevelPopup(true);
+        }, 300);
+        return prev;
+      }
+
+      // Explode each block one by one
+      const delay = 60;
+      shuffled.forEach((block, index) => {
+        setTimeout(() => {
+          if (boardRef.current) {
+            const rect = boardRef.current.getBoundingClientRect();
+            const cellSize = rect.width / GRID_SIZE;
+            const cellCenterX = rect.left + (block.x * cellSize) + (cellSize / 2);
+            const cellCenterY = rect.top + (block.y * cellSize) + (cellSize / 2);
+            spawnParticles(cellCenterX, cellCenterY, block.color, 8);
+          }
+
+          setGameState(p => {
+            const newGrid = p.grid.map(row => [...row]);
+            newGrid[block.y][block.x] = null;
+            return { ...p, grid: newGrid, score: p.score + 5 };
+          });
+
+          if (index % 3 === 0) triggerShake();
+
+          if (index === shuffled.length - 1) {
+            setTimeout(() => {
+              setCelebrating(false);
+              setShowLevelPopup(true);
+            }, 300);
+          }
+        }, index * delay);
+      });
+
+      return prev;
+    });
+  };
+
   const handleRestart = () => {
+    const initialLevel = 1;
+    const levelConfig = getLevelConfig(initialLevel);
+    const initialGrid = createRandomGrid(levelConfig.gridFill, initialLevel);
     setGameState({
-      grid: createRandomGrid(0.3),
+      grid: initialGrid,
+      boosters: [],
       score: 0,
       highScore: Number(localStorage.getItem('highScore')) || 0,
-      hand: [generatePiece(), generatePiece(), generatePiece()],
+      hand: generateValidHand(initialGrid, initialLevel),
       gameOver: false,
       selectedPieceIndex: null,
       clearingTiles: [],
-      combo: 1
+      combo: 1,
+      level: initialLevel,
+      objectives: initializeObjectives(initialLevel),
+      levelComplete: false
     });
     setParticles([]);
     setFloatingTexts([]);
+    setCelebrating(false);
+    setShowLevelPopup(false);
+    setShowAllClear(false);
+    setTrashUses(1);
+  };
+
+  const handleNextLevel = () => {
+    const nextLevel = gameState.level + 1;
+    const levelConfig = getLevelConfig(nextLevel);
+    const newGrid = createRandomGrid(levelConfig.gridFill, nextLevel);
+    setGameState(prev => ({
+      ...prev,
+      grid: newGrid,
+      boosters: [],
+      hand: generateValidHand(newGrid, nextLevel),
+      gameOver: false,
+      selectedPieceIndex: null,
+      clearingTiles: [],
+      combo: 1,
+      level: nextLevel,
+      objectives: initializeObjectives(nextLevel),
+      levelComplete: false
+    }));
+    setParticles([]);
+    setFloatingTexts([]);
+    setCelebrating(false);
+    setShowLevelPopup(false);
+    setShowAllClear(false);
+    setTrashUses(1);
+  };
+
+  // Handle clicking on a booster to activate it
+  const activateBooster = (booster: Booster) => {
+    if (celebrating || showLevelPopup || showAllClear || gameState.gameOver) return;
+    if (affectedCells.size > 0) return; // Already activating
+
+    // Calculate affected cells for visual indicator
+    const previewCells = getBoosterAffectedCells(booster);
+    const previewColor = booster.type === 'line_bomb' ? 'rgba(59, 130, 246, 0.3)'
+      : booster.type === 'bomb' ? 'rgba(249, 115, 22, 0.3)'
+      : 'rgba(168, 85, 247, 0.3)';
+
+    // Show affected area indicator (will fade out via CSS)
+    setAffectedCells(previewCells);
+    setAffectedColor(previewColor);
+
+    // Clear indicator after fade animation
+    setTimeout(() => {
+      setAffectedCells(new Set());
+      setAffectedColor('transparent');
+    }, 400);
+
+    // Execute explosion immediately (simultaneous with indicator)
+    executeBoosterExplosion(booster);
+  };
+
+  // Get points affected by a booster explosion
+  const getBoosterExplosionPoints = (booster: Booster, grid: (typeof gameState.grid)): Point[] => {
+    const points: Point[] = [];
+    if (booster.type === 'line_bomb') {
+      for (let i = 0; i < GRID_SIZE; i++) {
+        points.push({ x: i, y: booster.y }); // Row
+        if (i !== booster.y) points.push({ x: booster.x, y: i }); // Column
+      }
+    } else if (booster.type === 'bomb') {
+      // 8 neighbors + center
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = booster.x + dx;
+          const ny = booster.y + dy;
+          if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE) {
+            points.push({ x: nx, y: ny });
+          }
+        }
+      }
+    } else if (booster.type === 'color_ball') {
+      for (let y = 0; y < GRID_SIZE; y++) {
+        for (let x = 0; x < GRID_SIZE; x++) {
+          if (grid[y][x]?.color === booster.color) {
+            points.push({ x, y });
+          }
+        }
+      }
+      points.push({ x: booster.x, y: booster.y }); // Include booster position
+    }
+    return points;
+  };
+
+  // Execute the actual booster explosion with CHAIN REACTIONS
+  const executeBoosterExplosion = (initialBooster: Booster) => {
+    const newGrid = gameState.grid.map(row => [...row]);
+    let currentBoosters = [...gameState.boosters];
+    let allPointsToRemove: Point[] = [];
+    let totalScore = 0;
+    let chainCount = 0;
+
+    // Queue of boosters to explode
+    const boosterQueue: Booster[] = [initialBooster];
+    const explodedBoosterIds = new Set<string>();
+
+    while (boosterQueue.length > 0) {
+      const booster = boosterQueue.shift()!;
+      if (explodedBoosterIds.has(booster.id)) continue;
+      explodedBoosterIds.add(booster.id);
+      chainCount++;
+
+      let effectText = '';
+      let bonusMultiplier = 1;
+
+      if (booster.type === 'line_bomb') {
+        effectText = '💣 LINE BLAST!';
+        bonusMultiplier = 1.5;
+      } else if (booster.type === 'bomb') {
+        effectText = '💥 BOOM!';
+        bonusMultiplier = 2;
+      } else if (booster.type === 'color_ball') {
+        effectText = '🌈 COLOR BLAST!';
+        bonusMultiplier = 3;
+      }
+
+      const pointsFromThisBooster = getBoosterExplosionPoints(booster, newGrid);
+
+      // Spawn visuals for this booster
+      if (boardRef.current) {
+        const rect = boardRef.current.getBoundingClientRect();
+        const cellSize = rect.width / GRID_SIZE;
+        const boosterCenterX = rect.left + (booster.x * cellSize) + (cellSize / 2);
+        const boosterCenterY = rect.top + (booster.y * cellSize) + (cellSize / 2);
+
+        // Particles for each exploded block
+        pointsFromThisBooster.forEach(p => {
+          const tile = newGrid[p.y]?.[p.x];
+          if (tile) {
+            const cellCenterX = rect.left + (p.x * cellSize) + (cellSize / 2);
+            const cellCenterY = rect.top + (p.y * cellSize) + (cellSize / 2);
+            spawnParticles(cellCenterX, cellCenterY, tile.color, 8);
+          }
+        });
+
+        spawnFloatingText(boosterCenterX, boosterCenterY - 20, effectText);
+        if (chainCount > 1) {
+          spawnFloatingText(boosterCenterX, boosterCenterY + 30, `CHAIN x${chainCount}!`);
+        }
+      }
+
+      // Check for OTHER boosters in the explosion radius
+      pointsFromThisBooster.forEach(p => {
+        const hitBooster = currentBoosters.find(b => b.x === p.x && b.y === p.y && !explodedBoosterIds.has(b.id));
+        if (hitBooster) {
+          boosterQueue.push(hitBooster);
+        }
+      });
+
+      // Collect points - unlock locked tiles, remove unlocked ones
+      let tilesCleared = 0;
+      pointsFromThisBooster.forEach(p => {
+        const tile = newGrid[p.y]?.[p.x];
+        if (tile) {
+          if (tile.locked) {
+            // Unlock the tile instead of removing it
+            newGrid[p.y][p.x] = { ...tile, locked: false };
+            // Spawn unlock visual
+            if (boardRef.current) {
+              const rect = boardRef.current.getBoundingClientRect();
+              const cellSize = rect.width / GRID_SIZE;
+              const cellCenterX = rect.left + (p.x * cellSize) + (cellSize / 2);
+              const cellCenterY = rect.top + (p.y * cellSize) + (cellSize / 2);
+              spawnFloatingText(cellCenterX, cellCenterY, '🔓');
+            }
+          } else {
+            // Remove unlocked tile
+            if (!allPointsToRemove.some(cp => cp.x === p.x && cp.y === p.y)) {
+              allPointsToRemove.push(p);
+              tilesCleared++;
+            }
+          }
+        }
+      });
+
+      totalScore += Math.round(tilesCleared * 15 * bonusMultiplier);
+
+      // Remove booster from list
+      currentBoosters = currentBoosters.filter(b => b.id !== booster.id);
+    }
+
+    // Count colors for objectives
+    const colorCounts: Record<string, number> = {};
+    allPointsToRemove.forEach(p => {
+      const tile = newGrid[p.y][p.x];
+      if (tile) {
+        colorCounts[tile.color] = (colorCounts[tile.color] || 0) + 1;
+      }
+    });
+
+    // Update objectives
+    const newObjectives = gameState.objectives.map(obj => ({
+      ...obj,
+      current: Math.min(obj.target, obj.current + (colorCounts[obj.color] || 0))
+    }));
+
+    const isLevelComplete = newObjectives.every(obj => obj.current >= obj.target);
+
+    // Collect IDs for animation
+    const matchingIds = allPointsToRemove.map(p => newGrid[p.y][p.x]?.id).filter(Boolean) as string[];
+
+    // Show total score
+    if (boardRef.current) {
+      const rect = boardRef.current.getBoundingClientRect();
+      const cellSize = rect.width / GRID_SIZE;
+      const avgX = allPointsToRemove.reduce((acc, p) => acc + p.x, 0) / allPointsToRemove.length;
+      const avgY = allPointsToRemove.reduce((acc, p) => acc + p.y, 0) / allPointsToRemove.length;
+      spawnFloatingText(rect.left + avgX * cellSize, rect.top + avgY * cellSize, `+${totalScore}`);
+    }
+
+    triggerShake();
+
+    setGameState(prev => ({
+      ...prev,
+      grid: newGrid,
+      boosters: currentBoosters,
+      score: prev.score + totalScore,
+      clearingTiles: matchingIds,
+      objectives: newObjectives,
+      levelComplete: isLevelComplete
+    }));
+
+    // Remove tiles after animation
+    setTimeout(() => {
+      setGameState(prev => {
+        const finalGrid = prev.grid.map(row => [...row]);
+        allPointsToRemove.forEach(p => {
+          finalGrid[p.y][p.x] = null;
+        });
+
+        // Check for ALL CLEAR
+        if (isGridEmpty(finalGrid, prev.boosters)) {
+          setTimeout(() => handleAllClear(), 100);
+          return {
+            ...prev,
+            grid: finalGrid,
+            clearingTiles: []
+          };
+        }
+
+        const lost = !prev.levelComplete && isGameOver(finalGrid, prev.hand);
+        return {
+          ...prev,
+          grid: finalGrid,
+          clearingTiles: [],
+          gameOver: lost
+        };
+      });
+    }, 400);
+  };
+
+  // Execute trash with shake + explode animation
+  const executeTrash = (index: number) => {
+    const piece = gameState.hand[index];
+    if (!piece) return;
+
+    // Start shake animation
+    setTrashingPieceIndex(index);
+
+    // After 1 second, explode and remove
+    setTimeout(() => {
+      // Spawn explosion particles at piece location
+      const pieceEl = pieceRefs.current[index];
+      if (pieceEl) {
+        const rect = pieceEl.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+
+        // Spawn particles for each color in the piece
+        piece.colors.forEach((color, i) => {
+          const offsetX = (Math.random() - 0.5) * rect.width * 0.5;
+          const offsetY = (Math.random() - 0.5) * rect.height * 0.5;
+          spawnParticles(centerX + offsetX, centerY + offsetY, color, 8);
+        });
+      }
+
+      triggerShake();
+      setTrashingPieceIndex(null);
+
+      // Remove piece from hand
+      setGameState(prev => {
+        const newHand = [...prev.hand];
+        newHand[index] = null;
+
+        if (newHand.every(p => p === null)) {
+          return {
+            ...prev,
+            hand: generateValidHand(prev.grid, prev.level),
+            selectedPieceIndex: null
+          };
+        }
+
+        return { ...prev, hand: newHand, selectedPieceIndex: null };
+      });
+    }, 800); // Shake for 800ms then explode
+  };
+
+  // Trash a piece (when dropped on trash)
+  const trashPiece = (index: number) => {
+    if (trashUses > 0) {
+      setTrashUses(prev => prev - 1);
+      executeTrash(index);
+    } else {
+      // Show ad popup - deselect piece first
+      setGameState(prev => ({ ...prev, selectedPieceIndex: null }));
+      setPendingTrashIndex(index);
+      setShowAdPopup(true);
+    }
+  };
+
+  // Handle watching ad
+  const handleWatchAd = () => {
+    setWatchingAd(true);
+    // Simulate watching an ad (in real app, this would show actual ad)
+    setTimeout(() => {
+      if (pendingTrashIndex !== null) {
+        executeTrash(pendingTrashIndex);
+      }
+      setShowAdPopup(false);
+      setPendingTrashIndex(null);
+      setWatchingAd(false);
+    }, 1500); // Simulate 1.5s ad
+  };
+
+  const handleCancelAd = () => {
+    setShowAdPopup(false);
+    setPendingTrashIndex(null);
+  };
+
+  const handlePowerupActivation = () => {
+    const pieceIndex = gameState.selectedPieceIndex;
+    if (pieceIndex === null) return;
+    trashPiece(pieceIndex);
   };
 
   const startDragging = (e: React.PointerEvent, index: number) => {
-    if (gameState.hand[index] === null || gameState.gameOver) return;
-    
+    if (gameState.hand[index] === null || gameState.gameOver || celebrating || showLevelPopup || showAllClear || trashingPieceIndex !== null) return;
+
     setGameState(prev => ({ ...prev, selectedPieceIndex: index }));
     setDragPosition({ x: e.clientX, y: e.clientY });
-    
+
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
   };
 
@@ -168,6 +786,22 @@ const App: React.FC = () => {
     if (gameState.selectedPieceIndex === null || gameState.gameOver) return;
 
     setDragPosition({ x: e.clientX, y: e.clientY });
+
+    // Check trash zone
+    let isOverTrash = false;
+    if (trashRef.current) {
+      const rect = trashRef.current.getBoundingClientRect();
+      if (e.clientX >= rect.left && e.clientX <= rect.right &&
+          e.clientY >= rect.top && e.clientY <= rect.bottom) {
+        isOverTrash = true;
+      }
+    }
+    setHoveredPowerup(isOverTrash ? 'trash' : null);
+
+    if (isOverTrash) {
+      setHoveredCell(null);
+      return;
+    }
 
     if (boardRef.current) {
       const rect = boardRef.current.getBoundingClientRect();
@@ -204,20 +838,23 @@ const App: React.FC = () => {
   const stopDragging = (e: React.PointerEvent) => {
     if (gameState.selectedPieceIndex === null) return;
 
-    if (hoveredCell) {
+    if (hoveredPowerup === 'trash') {
+      handlePowerupActivation();
+    } else if (hoveredCell) {
       placePieceAt(hoveredCell.x, hoveredCell.y);
     } else {
       setGameState(prev => ({ ...prev, selectedPieceIndex: null }));
     }
-    
+
     setDragPosition(null);
     setHoveredCell(null);
+    setHoveredPowerup(null);
   };
 
   const placePieceAt = (x: number, y: number) => {
-    const { selectedPieceIndex, hand, grid, score, combo } = gameState;
+    const { selectedPieceIndex, hand, grid, score, combo, level, objectives } = gameState;
     const piece = hand[selectedPieceIndex!];
-    
+
     if (piece && canPlacePiece(grid, piece, x, y)) {
       const newGrid = grid.map(row => [...row]);
       piece.shape.forEach((point, i) => {
@@ -227,70 +864,261 @@ const App: React.FC = () => {
         };
       });
 
-      const newHand = [...hand];
+      let newHand = [...hand];
       newHand[selectedPieceIndex!] = null;
 
+      // When all pieces are used, generate new hand (same level)
       if (newHand.every(p => p === null)) {
-        newHand[0] = generatePiece();
-        newHand[1] = generatePiece();
-        newHand[2] = generatePiece();
+        const validHand = generateValidHand(newGrid, level);
+        newHand = validHand;
       }
 
       const matchGroups = findMatchGroups(newGrid);
-      
+
       // Calculate Score & Effects
       if (matchGroups.length > 0) {
-        const allClearedPoints = matchGroups.flat();
-        const totalCleared = allClearedPoints.length;
         const newCombo = combo + 1;
-        
-        // Use updated scoring logic
+
+        // Collect ALL cleared points from ALL match groups
+        let allClearedPoints: Point[] = [];
+        matchGroups.forEach(group => {
+          group.forEach(p => {
+            if (!allClearedPoints.some(cp => cp.x === p.x && cp.y === p.y)) {
+              allClearedPoints.push(p);
+            }
+          });
+        });
+
+        // Determine booster based on TOTAL blocks cleared (sum of all colors)
+        const boostersToCreate: Booster[] = [];
+        const totalForBooster = allClearedPoints.length;
+
+        if (totalForBooster >= 4) {
+          // Find center of ALL cleared points for booster placement
+          const avgX = allClearedPoints.reduce((acc, p) => acc + p.x, 0) / totalForBooster;
+          const avgY = allClearedPoints.reduce((acc, p) => acc + p.y, 0) / totalForBooster;
+
+          // Find the actual point closest to center
+          let centerPoint = allClearedPoints[0];
+          let minDist = Infinity;
+          allClearedPoints.forEach(p => {
+            const dist = Math.abs(p.x - avgX) + Math.abs(p.y - avgY);
+            if (dist < minDist) {
+              minDist = dist;
+              centerPoint = p;
+            }
+          });
+
+          const centerCell = newGrid[centerPoint.y][centerPoint.x];
+
+          if (totalForBooster >= 6 && centerCell) {
+            // Color ball - count ALL colors on the grid to find the most common
+            const gridColorCounts: Record<string, number> = {};
+            const clearedSet = new Set(allClearedPoints.map(p => `${p.x},${p.y}`));
+            for (let gy = 0; gy < GRID_SIZE; gy++) {
+              for (let gx = 0; gx < GRID_SIZE; gx++) {
+                const cell = newGrid[gy][gx];
+                if (cell && !clearedSet.has(`${gx},${gy}`)) {
+                  gridColorCounts[cell.color] = (gridColorCounts[cell.color] || 0) + 1;
+                }
+              }
+            }
+            const mostCommonGridColor = Object.entries(gridColorCounts).sort((a, b) => b[1] - a[1])[0]?.[0] as Color || centerCell.color;
+
+            // Color ball - eliminates all of the MOST COMMON color on grid
+            boostersToCreate.push({
+              id: `booster-${Date.now()}-${Math.random()}`,
+              type: 'color_ball',
+              x: centerPoint.x,
+              y: centerPoint.y,
+              color: mostCommonGridColor
+            });
+            // Remove center from cleared points (booster goes there)
+            allClearedPoints = allClearedPoints.filter(p => p.x !== centerPoint.x || p.y !== centerPoint.y);
+          } else if (totalForBooster === 5 && centerCell) {
+            // Bomb - eliminates 1 layer around
+            boostersToCreate.push({
+              id: `booster-${Date.now()}-${Math.random()}`,
+              type: 'bomb',
+              x: centerPoint.x,
+              y: centerPoint.y,
+              color: centerCell.color
+            });
+            allClearedPoints = allClearedPoints.filter(p => p.x !== centerPoint.x || p.y !== centerPoint.y);
+          } else if (totalForBooster === 4 && centerCell) {
+            // Line bomb - eliminates row + column
+            boostersToCreate.push({
+              id: `booster-${Date.now()}-${Math.random()}`,
+              type: 'line_bomb',
+              x: centerPoint.x,
+              y: centerPoint.y,
+              color: centerCell.color
+            });
+            allClearedPoints = allClearedPoints.filter(p => p.x !== centerPoint.x || p.y !== centerPoint.y);
+          }
+        }
+
+        const totalCleared = allClearedPoints.length;
+
+        // Count cleared blocks by color for objectives
+        const colorCounts: Record<string, number> = {};
+        allClearedPoints.forEach(p => {
+          const cell = newGrid[p.y][p.x];
+          if (cell) {
+            colorCounts[cell.color] = (colorCounts[cell.color] || 0) + 1;
+          }
+        });
+
+        // Update objectives
+        const newObjectives = objectives.map(obj => ({
+          ...obj,
+          current: Math.min(obj.target, obj.current + (colorCounts[obj.color] || 0))
+        }));
+
+        // Check if level complete
+        const isLevelComplete = newObjectives.every(obj => obj.current >= obj.target);
+
+        // Calculate score
         const { score: moveScore, text, multiplier } = calculateScore(totalCleared, newCombo);
         const newScore = score + moveScore;
-        const matchingIds = allClearedPoints.map(p => newGrid[p.y][p.x]!.id);
-        
+        const matchingIds = allClearedPoints.map(p => newGrid[p.y][p.x]?.id).filter(Boolean) as string[];
+
         // Spawn Visuals
         if (boardRef.current) {
           const rect = boardRef.current.getBoundingClientRect();
           const cellSize = rect.width / GRID_SIZE;
-          
-          // Particles for each block
+
+          // Particles for cleared blocks
           allClearedPoints.forEach(p => {
-            const cellCenterX = rect.left + (p.x * cellSize) + (cellSize / 2);
-            const cellCenterY = rect.top + (p.y * cellSize) + (cellSize / 2);
-            const iconPath = newGrid[p.y][p.x]!.color;
-            const color = getParticleColor(iconPath);
-            spawnParticles(cellCenterX, cellCenterY, color, 6);
+            const cell = newGrid[p.y][p.x];
+            if (cell) {
+              const cellCenterX = rect.left + (p.x * cellSize) + (cellSize / 2);
+              const cellCenterY = rect.top + (p.y * cellSize) + (cellSize / 2);
+              spawnParticles(cellCenterX, cellCenterY, cell.color, 6);
+            }
           });
 
-          // Floating text at center of mass
-          if (text) {
+          // Floating text for score
+          if (text && totalCleared > 0) {
             const avgX = allClearedPoints.reduce((acc, p) => acc + p.x, 0) / totalCleared;
             const avgY = allClearedPoints.reduce((acc, p) => acc + p.y, 0) / totalCleared;
             const screenX = rect.left + (avgX * cellSize) + (cellSize / 2);
             const screenY = rect.top + (avgY * cellSize) + (cellSize / 2);
             spawnFloatingText(screenX, screenY, `${text} x${multiplier}`);
           }
+
+          // Show booster creation text
+          boostersToCreate.forEach(booster => {
+            const screenX = rect.left + (booster.x * cellSize) + (cellSize / 2);
+            const screenY = rect.top + (booster.y * cellSize) + (cellSize / 2);
+            const boosterText = booster.type === 'color_ball' ? '🌈 COLOR!' :
+                               booster.type === 'bomb' ? '💥 BOMB!' : '💣 LINE!';
+            spawnFloatingText(screenX, screenY - 20, boosterText);
+          });
         }
-        
+
+        // Clear the center cells where boosters will be placed
+        boostersToCreate.forEach(booster => {
+          newGrid[booster.y][booster.x] = null;
+        });
+
+        // Merge new boosters with existing ones
+        const newBoosters = [...gameState.boosters, ...boostersToCreate];
+
         triggerShake();
 
-        setGameState(prev => ({ 
-          ...prev, 
-          grid: newGrid, 
-          score: newScore, 
-          hand: newHand, 
+        setGameState(prev => ({
+          ...prev,
+          grid: newGrid,
+          boosters: newBoosters,
+          score: newScore,
+          hand: newHand,
           selectedPieceIndex: null,
           clearingTiles: matchingIds,
-          combo: newCombo
+          combo: newCombo,
+          objectives: newObjectives,
+          levelComplete: isLevelComplete
         }));
 
         setTimeout(() => {
           setGameState(prev => {
-            const finalGrid = prev.grid.map(row => 
+            let finalGrid = prev.grid.map(row =>
               row.map(cell => cell && matchingIds.includes(cell.id) ? null : cell)
             );
-            const lost = isGameOver(finalGrid, prev.hand);
+
+            // Find locked tiles adjacent to cleared tiles and unlock them
+            const adjacentLockedTiles = getAdjacentToMatches(finalGrid, allClearedPoints);
+            if (adjacentLockedTiles.length > 0) {
+              adjacentLockedTiles.forEach(p => {
+                const tile = finalGrid[p.y][p.x];
+                if (tile && tile.locked) {
+                  finalGrid[p.y][p.x] = { ...tile, locked: false };
+                }
+              });
+
+              // Check for new matches after unlocking (chain reaction)
+              const processChainReactions = (currentGrid: typeof finalGrid): typeof finalGrid => {
+                const newMatchGroups = findMatchGroups(currentGrid);
+                if (newMatchGroups.length === 0) return currentGrid;
+
+                // Collect all points to clear
+                let chainClearedPoints: Point[] = [];
+                newMatchGroups.forEach(group => {
+                  group.forEach(p => {
+                    if (!chainClearedPoints.some(cp => cp.x === p.x && cp.y === p.y)) {
+                      chainClearedPoints.push(p);
+                    }
+                  });
+                });
+
+                // Spawn particles for chain reaction
+                if (boardRef.current) {
+                  const rect = boardRef.current.getBoundingClientRect();
+                  const cellSize = rect.width / GRID_SIZE;
+                  chainClearedPoints.forEach(p => {
+                    const cell = currentGrid[p.y][p.x];
+                    if (cell) {
+                      const cellCenterX = rect.left + (p.x * cellSize) + (cellSize / 2);
+                      const cellCenterY = rect.top + (p.y * cellSize) + (cellSize / 2);
+                      spawnParticles(cellCenterX, cellCenterY, cell.color, 6);
+                    }
+                  });
+                }
+
+                // Clear the matched tiles
+                let updatedGrid = currentGrid.map(row => [...row]);
+                chainClearedPoints.forEach(p => {
+                  updatedGrid[p.y][p.x] = null;
+                });
+
+                // Unlock adjacent locked tiles for this chain
+                const moreLockedTiles = getAdjacentToMatches(updatedGrid, chainClearedPoints);
+                moreLockedTiles.forEach(p => {
+                  const tile = updatedGrid[p.y][p.x];
+                  if (tile && tile.locked) {
+                    updatedGrid[p.y][p.x] = { ...tile, locked: false };
+                  }
+                });
+
+                // Recursively process more chain reactions
+                return processChainReactions(updatedGrid);
+              };
+
+              finalGrid = processChainReactions(finalGrid);
+            }
+
+            // Check for ALL CLEAR
+            if (isGridEmpty(finalGrid, prev.boosters)) {
+              // Trigger ALL CLEAR after a short delay
+              setTimeout(() => handleAllClear(), 100);
+              return {
+                ...prev,
+                grid: finalGrid,
+                clearingTiles: []
+              };
+            }
+
+            const lost = !prev.levelComplete && isGameOver(finalGrid, prev.hand);
             return {
               ...prev,
               grid: finalGrid,
@@ -305,7 +1133,7 @@ const App: React.FC = () => {
         const lost = isGameOver(newGrid, newHand);
         // Base score for placing pieces is piece size * 10
         const placementScore = piece.shape.length * 10;
-        
+
         setGameState(prev => ({
           ...prev,
           grid: newGrid,
@@ -313,7 +1141,7 @@ const App: React.FC = () => {
           hand: newHand,
           selectedPieceIndex: null,
           gameOver: lost,
-          combo: 1 
+          combo: 1
         }));
       }
     } else {
@@ -372,6 +1200,41 @@ const App: React.FC = () => {
         .shake-animation {
           animation: shake 0.3s cubic-bezier(.36,.07,.19,.97) both;
         }
+        @keyframes pulse {
+          0%, 100% { transform: scale(1); box-shadow: inherit; }
+          50% { transform: scale(1.05); }
+        }
+        @keyframes fade-out {
+          0% { opacity: 1; }
+          100% { opacity: 0; }
+        }
+        .animate-fade-out {
+          animation: fade-out 0.4s ease-out forwards;
+        }
+        @keyframes bomb-glow {
+          0%, 100% { filter: brightness(1); }
+          50% { filter: brightness(1.3); }
+        }
+        @keyframes adProgress {
+          0% { width: 0%; }
+          100% { width: 100%; }
+        }
+        @keyframes piece-shake {
+          0%, 100% { transform: translate(0, 0) rotate(0deg); }
+          10% { transform: translate(-4px, -2px) rotate(-3deg); }
+          20% { transform: translate(4px, 2px) rotate(3deg); }
+          30% { transform: translate(-4px, 2px) rotate(-2deg); }
+          40% { transform: translate(4px, -2px) rotate(2deg); }
+          50% { transform: translate(-3px, 3px) rotate(-3deg); }
+          60% { transform: translate(3px, -3px) rotate(3deg); }
+          70% { transform: translate(-2px, 2px) rotate(-2deg); }
+          80% { transform: translate(2px, -2px) rotate(2deg); }
+          90% { transform: translate(-1px, 1px) rotate(-1deg); }
+        }
+        .piece-trashing {
+          animation: piece-shake 0.15s ease-in-out infinite;
+          filter: saturate(1.5) brightness(1.2);
+        }
       `}</style>
 
       {/* Effects Layer */}
@@ -424,25 +1287,66 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Score Card */}
-      <div className="bg-slate-900 rounded-3xl p-5 mb-6 flex justify-between items-center shadow-xl border border-slate-800 relative overflow-hidden">
+      {/* Level & Score Card */}
+      <div className="bg-slate-900 rounded-3xl p-4 mb-4 shadow-xl border border-slate-800 relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-purple-600 opacity-50"></div>
-        <div className="flex flex-col">
-          <span className="text-slate-500 text-[10px] uppercase font-bold tracking-widest mb-1">Score</span>
-          <span className="text-5xl font-black text-white tracking-tight">{gameState.score}</span>
+
+        {/* Top row: Level, Score, Combo, Restart */}
+        <div className="flex justify-between items-center mb-3">
+          <div className="flex items-center gap-3">
+            <div className={`text-xl font-black px-3 py-1 rounded-xl ${gameState.level <= 1 ? 'bg-blue-500/20 text-blue-400' : gameState.level === 2 ? 'bg-green-500/20 text-green-400' : 'bg-purple-500/20 text-purple-400'}`}>
+              Level {gameState.level}
+            </div>
+            <div className="flex flex-col">
+              <span className="text-2xl font-black text-white">{gameState.score}</span>
+              <span className="text-[8px] text-slate-500 uppercase font-bold">Score</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex flex-col items-end">
+              <div className={`text-lg font-black transition-all ${gameState.combo > 1 ? 'text-yellow-400' : 'text-slate-700'}`}>
+                x{gameState.combo}
+              </div>
+              <span className="text-[8px] uppercase font-bold text-slate-600">Combo</span>
+            </div>
+            <button
+              onClick={handleRestart}
+              className="bg-slate-800 hover:bg-slate-700 w-10 h-10 rounded-xl flex items-center justify-center transition-all active:scale-90 border border-slate-700"
+            >
+              <i className="fa-solid fa-rotate-right text-lg text-blue-400"></i>
+            </button>
+          </div>
         </div>
-        <div className="flex flex-col items-end">
-           <div className={`text-xl font-black transition-all ${gameState.combo > 1 ? 'text-yellow-400 scale-110' : 'text-slate-700'}`}>
-             x{gameState.combo}
-           </div>
-           <span className="text-[8px] uppercase font-bold text-slate-600 tracking-wider">Combo</span>
+
+        {/* Objectives */}
+        <div className="flex gap-2 justify-center">
+          {gameState.objectives.map((obj, i) => {
+            const progress = Math.min(100, (obj.current / obj.target) * 100);
+            const isComplete = obj.current >= obj.target;
+            return (
+              <div key={i} className="flex-1 max-w-[100px]">
+                <div className="flex items-center justify-between mb-1">
+                  <div
+                    className="w-4 h-4 rounded-md shadow-inner"
+                    style={{ backgroundColor: obj.color }}
+                  />
+                  <span className={`text-xs font-bold ${isComplete ? 'text-green-400' : 'text-white'}`}>
+                    {obj.current}/{obj.target}
+                  </span>
+                </div>
+                <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-all duration-300 rounded-full ${isComplete ? 'bg-green-500' : ''}`}
+                    style={{
+                      width: `${progress}%`,
+                      backgroundColor: isComplete ? undefined : obj.color
+                    }}
+                  />
+                </div>
+              </div>
+            );
+          })}
         </div>
-        <button 
-          onClick={handleRestart}
-          className="ml-4 bg-slate-800 hover:bg-slate-700 w-12 h-12 rounded-2xl flex items-center justify-center transition-all active:scale-90 border border-slate-700 shadow-lg"
-        >
-          <i className="fa-solid fa-rotate-right text-xl text-blue-400"></i>
-        </button>
       </div>
 
       {/* Game Board Container */}
@@ -460,34 +1364,105 @@ const App: React.FC = () => {
           {gameState.grid.map((row, y) =>
             row.map((cell, x) => {
               const ghost = isGhostCell(x, y);
+              const booster = gameState.boosters.find(b => b.x === x && b.y === y);
+              const isAffected = affectedCells.has(`${x},${y}`);
+
+              // Determine if we should use an image
+              const cellColor = cell?.color;
+              const ghostColor = ghost?.color;
+              const cellHasImage = cellColor && BLOCK_IMAGES[cellColor];
+              const ghostHasImage = ghostColor && BLOCK_IMAGES[ghostColor];
+
+              // Calculate background
+              let bgColor = 'rgba(30, 41, 59, 0.3)'; // empty cell
+              let bgImage = 'none';
+
+              if (booster) {
+                bgColor = 'transparent';
+              } else if (cell) {
+                if (cellHasImage) {
+                  bgColor = 'transparent';
+                  bgImage = `url(${BLOCK_IMAGES[cellColor]})`;
+                } else {
+                  bgColor = cellColor;
+                }
+              } else if (ghost) {
+                if (ghostHasImage) {
+                  bgColor = 'transparent';
+                  bgImage = `url(${BLOCK_IMAGES[ghostColor]})`;
+                } else {
+                  bgColor = ghostColor;
+                }
+              }
+
               return (
                 <div
                   key={`${x}-${y}`}
+                  onClick={() => booster && activateBooster(booster)}
                   className={`
-                    relative min-w-0 min-h-0 rounded-lg transition-all duration-300 overflow-hidden
+                    relative rounded-lg transition-all duration-200
                     ${cell ? 'shadow-[0_4px_10px_rgba(0,0,0,0.3)]' : 'bg-slate-800/30 border border-white/5'}
+                    ${booster ? 'cursor-pointer active:scale-95' : ''}
                   `}
                   style={{
+                    backgroundColor: bgColor,
+                    backgroundImage: bgImage,
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'center',
                     opacity: ghost ? (ghost.isValid ? 0.7 : 0.15) : 1,
                     transform: gameState.clearingTiles.includes(cell?.id || '')
                       ? 'scale(0) rotate(90deg)'
-                      : (ghost && ghost.isValid ? 'scale(0.95)' : 'scale(1)')
+                      : (ghost && ghost.isValid ? 'scale(0.95)' : 'scale(1)'),
+                    boxShadow: cell && !booster ? `inset 0 2px 4px rgba(255,255,255,0.2), 0 4px 8px rgba(0,0,0,0.4)` : 'none'
                   }}
                 >
-                  {cell && (
-                    <img
-                      src={cell.color}
-                      alt="tile"
-                      className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+                  {/* Affected area indicator - shows during booster activation with fade */}
+                  {isAffected && !booster && (
+                    <div
+                      className="absolute inset-0 rounded-lg pointer-events-none z-10 animate-fade-out"
+                      style={{
+                        backgroundColor: affectedColor
+                      }}
                     />
                   )}
-                  {ghost && (
-                    <img
-                      src={ghost.color}
-                      alt="ghost"
-                      className="absolute inset-0 w-full h-full object-cover pointer-events-none"
-                      style={{ opacity: ghost.isValid ? 0.7 : 0.3 }}
-                    />
+                  {cell && !booster && (
+                    <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent rounded-lg pointer-events-none" />
+                  )}
+                  {/* Locked tile overlay - frozen appearance */}
+                  {cell?.locked && !booster && (
+                    <div className="absolute inset-0 rounded-lg pointer-events-none z-20 flex items-center justify-center bg-slate-900/60">
+                      <div className="w-full h-full flex items-center justify-center">
+                        <svg className="w-4 h-4 text-slate-300/80" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+                        </svg>
+                      </div>
+                      {/* Ice/frost pattern overlay */}
+                      <div className="absolute inset-0 rounded-lg opacity-30" style={{
+                        background: 'repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(148, 163, 184, 0.3) 2px, rgba(148, 163, 184, 0.3) 4px)'
+                      }} />
+                    </div>
+                  )}
+                  {booster && (
+                    <div
+                      className="absolute inset-0 flex items-center justify-center"
+                      style={{ animation: 'pulse 1s ease-in-out infinite' }}
+                    >
+                      <div
+                        className="w-[85%] h-[85%] rounded-xl flex items-center justify-center"
+                        style={{
+                          background: booster.type === 'color_ball'
+                            ? 'linear-gradient(135deg, #f97316, #eab308, #22c55e, #3b82f6, #a855f7)'
+                            : booster.type === 'bomb'
+                            ? 'linear-gradient(135deg, #ef4444, #f97316)'
+                            : 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+                          boxShadow: '0 4px 15px rgba(0,0,0,0.4), inset 0 2px 6px rgba(255,255,255,0.3)'
+                        }}
+                      >
+                        <span className="text-2xl drop-shadow-lg" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.5))' }}>
+                          {booster.type === 'color_ball' ? '🌈' : booster.type === 'bomb' ? '💥' : '💣'}
+                        </span>
+                      </div>
+                    </div>
                   )}
                   {ghost && !ghost.isValid && (
                     <div className="absolute inset-0 flex items-center justify-center">
@@ -500,8 +1475,47 @@ const App: React.FC = () => {
           )}
         </div>
 
+        {/* ALL CLEAR Screen */}
+        {showAllClear && (
+          <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm rounded-3xl flex flex-col items-center justify-center p-8 text-center z-50">
+            <div className="text-7xl mb-4 animate-bounce">✨</div>
+            <h2
+              className="text-4xl font-black mb-2 bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 bg-clip-text text-transparent"
+              style={{
+                animation: 'pulse 0.5s ease-in-out infinite',
+                textShadow: '0 0 30px rgba(251, 191, 36, 0.5)'
+              }}
+            >
+              ALL CLEAR!!!
+            </h2>
+            <p className="text-yellow-300 text-lg font-bold mb-2">+500 BONUS</p>
+            <p className="text-slate-400 text-sm font-medium">Generating new blocks...</p>
+          </div>
+        )}
+
+        {/* Level Complete Screen */}
+        {showLevelPopup && (
+          <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-md rounded-3xl flex flex-col items-center justify-center p-8 text-center z-50">
+            <div className="text-6xl mb-4">🎉</div>
+            <h2 className="text-3xl font-black mb-1 bg-gradient-to-r from-green-400 to-emerald-500 bg-clip-text text-transparent">
+              LEVEL {gameState.level} COMPLETE!
+            </h2>
+            <p className="text-slate-400 text-sm mb-6 font-medium">All objectives cleared!</p>
+            <div className="bg-slate-900 rounded-2xl p-4 w-full mb-6 border border-slate-800">
+              <span className="text-slate-500 text-[10px] uppercase font-bold tracking-widest block mb-2">Score</span>
+              <span className="text-4xl font-black text-white">{gameState.score}</span>
+            </div>
+            <button
+              onClick={handleNextLevel}
+              className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-black py-4 px-12 rounded-2xl transition-all active:scale-95 shadow-lg"
+            >
+              NEXT LEVEL →
+            </button>
+          </div>
+        )}
+
         {/* Game Over Screen */}
-        {gameState.gameOver && (
+        {gameState.gameOver && !gameState.levelComplete && (
           <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-md rounded-3xl flex flex-col items-center justify-center p-8 text-center z-50">
             <h2 className="text-4xl font-black mb-1 text-white">GAME OVER</h2>
             <p className="text-slate-400 text-sm mb-8 font-medium">No valid moves left!</p>
@@ -509,7 +1523,7 @@ const App: React.FC = () => {
               <span className="text-slate-500 text-[10px] uppercase font-bold tracking-widest block mb-2">Final Score</span>
               <span className="text-5xl font-black text-white">{gameState.score}</span>
             </div>
-            <button 
+            <button
               onClick={handleRestart}
               className="bg-blue-600 hover:bg-blue-500 text-white font-black py-4 px-12 rounded-2xl transition-all active:scale-95"
             >
@@ -518,6 +1532,7 @@ const App: React.FC = () => {
           </div>
         )}
       </div>
+
 
       {/* Drag Preview */}
       {dragPosition && gameState.selectedPieceIndex !== null && (
@@ -533,32 +1548,104 @@ const App: React.FC = () => {
       )}
 
       {/* Piece Selection Rack */}
-      <div className="mt-4 flex flex-col gap-6">
+      <div className="mt-4 flex flex-col gap-4">
         <div className="flex items-center justify-center gap-4">
           <div className="h-[1px] bg-slate-800 flex-1"></div>
           <h3 className="text-slate-500 text-[10px] font-black uppercase tracking-[0.3em]">Next Shapes</h3>
           <div className="h-[1px] bg-slate-800 flex-1"></div>
         </div>
-        
-        <div className="flex justify-around items-center gap-3 h-24 sm:h-32">
+
+        <div className="flex justify-around items-center gap-3 h-28 sm:h-36">
           {gameState.hand.map((piece, index) => (
-            <div 
+            <div
               key={piece?.id || `empty-${index}`}
-              onPointerDown={(e) => startDragging(e, index)}
+              ref={el => pieceRefs.current[index] = el}
               className={`
-                flex-1 h-full bg-slate-900 rounded-3xl flex items-center justify-center p-3
-                border-2 transition-all duration-300 relative touch-none
-                ${gameState.selectedPieceIndex === index 
-                  ? 'border-blue-500/50 bg-blue-500/5 opacity-30' 
-                  : 'border-slate-800 hover:border-slate-700 cursor-grab'}
+                flex-1 h-full bg-slate-900 rounded-3xl flex items-center justify-center
+                border-2 transition-all duration-300 relative
+                ${gameState.selectedPieceIndex === index
+                  ? 'border-blue-500/50 bg-blue-500/5 opacity-30'
+                  : 'border-slate-800'}
                 ${piece === null ? 'opacity-0 scale-90 pointer-events-none' : ''}
+                ${trashingPieceIndex === index ? 'piece-trashing border-red-500' : ''}
               `}
             >
-              {piece && <PiecePreview piece={piece} active={false} />}
+              {/* Piece (draggable area) */}
+              <div
+                onPointerDown={(e) => startDragging(e, index)}
+                className="flex items-center justify-center p-3 touch-none cursor-grab w-full h-full"
+              >
+                {piece && <PiecePreview piece={piece} active={false} />}
+              </div>
             </div>
           ))}
         </div>
+
+        {/* Trash Zone */}
+        <div
+          ref={trashRef}
+          className={`
+            h-14 rounded-2xl flex items-center justify-center gap-2 relative
+            bg-slate-900 border-2 transition-all duration-200
+            ${hoveredPowerup === 'trash'
+              ? 'border-red-500 bg-red-500/20 scale-[1.02]'
+              : 'border-slate-800'}
+            ${gameState.selectedPieceIndex !== null ? 'opacity-100' : 'opacity-30'}
+          `}
+        >
+          <i className={`fa-solid fa-trash text-lg ${trashUses > 0 ? 'text-red-400' : 'text-slate-600'}`}></i>
+          <span className="text-xs text-slate-500 font-bold uppercase">Drop to discard</span>
+          {/* Uses indicator */}
+          <div className={`absolute right-3 px-2 py-0.5 rounded-full text-[10px] font-bold
+            ${trashUses > 0 ? 'bg-red-500/20 text-red-400' : 'bg-slate-800 text-slate-500'}`}>
+            {trashUses > 0 ? `${trashUses} free` : '📺 ad'}
+          </div>
+        </div>
       </div>
+
+      {/* Ad Popup Modal */}
+      {showAdPopup && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100]">
+          <div className="bg-slate-900 rounded-3xl p-6 mx-4 max-w-sm w-full border border-slate-700 shadow-2xl">
+            {watchingAd ? (
+              <div className="text-center py-8">
+                <div className="text-5xl mb-4 animate-pulse">📺</div>
+                <div className="w-full bg-slate-800 rounded-full h-2 mb-4 overflow-hidden">
+                  <div className="bg-gradient-to-r from-green-500 to-emerald-500 h-full rounded-full"
+                    style={{ animation: 'adProgress 1.5s linear forwards' }}></div>
+                </div>
+                <p className="text-slate-400 text-sm font-medium">Playing ad...</p>
+              </div>
+            ) : (
+              <div className="text-center">
+                <div className="text-5xl mb-4">🗑️</div>
+                <h3 className="text-xl font-black text-white mb-2">Discard Piece?</h3>
+                <p className="text-slate-400 text-sm mb-6">
+                  You've used your free discard for this level.
+                  Watch a short ad to use it again!
+                </p>
+
+                <div className="flex flex-col gap-3">
+                  <button
+                    onClick={handleWatchAd}
+                    className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500
+                      text-white font-black py-4 rounded-2xl transition-all active:scale-95 shadow-lg flex items-center justify-center gap-2"
+                  >
+                    <i className="fa-solid fa-play"></i>
+                    Watch Ad
+                  </button>
+                  <button
+                    onClick={handleCancelAd}
+                    className="w-full bg-slate-800 hover:bg-slate-700 text-slate-400 font-bold py-3 rounded-2xl transition-all active:scale-95"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -590,20 +1677,22 @@ const PiecePreview: React.FC<{ piece: PieceData, active: boolean, size?: 'small'
         const y = minY + Math.floor(i / width);
         const indexInShape = piece.shape.findIndex(p => p.x === x && p.y === y);
         const inShape = indexInShape !== -1;
+        
+        const color = inShape ? piece.colors[indexInShape] : undefined;
+        const hasImage = color && BLOCK_IMAGES[color];
 
         return (
           <div
             key={i}
-            className={`${boxSize} rounded-lg transition-all duration-200 overflow-hidden ${inShape ? 'shadow-md' : 'bg-transparent'}`}
-          >
-            {inShape && (
-              <img
-                src={piece.colors[indexInShape]}
-                alt="piece"
-                className="w-full h-full object-cover"
-              />
-            )}
-          </div>
+            className={`${boxSize} rounded-lg transition-all duration-200 ${inShape ? 'shadow-md' : 'bg-transparent'}`}
+            style={{
+              backgroundColor: hasImage ? 'transparent' : (inShape ? color : 'transparent'),
+              backgroundImage: hasImage ? `url(${BLOCK_IMAGES[color]})` : 'none',
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              boxShadow: inShape ? 'inset 0 1px 3px rgba(255,255,255,0.4), 0 2px 4px rgba(0,0,0,0.3)' : 'none'
+            }}
+          />
         );
       })}
     </div>
