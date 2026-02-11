@@ -88,6 +88,8 @@ const App: React.FC = () => {
   // Powerup uses (reset each level)
   const [trashUses, setTrashUses] = useState(1);
   const [shuffleUses, setShuffleUses] = useState(3);
+  const [deleteBlockUses, setDeleteBlockUses] = useState(1);
+  const [deleteBlockMode, setDeleteBlockMode] = useState(false);
   const [showAdPopup, setShowAdPopup] = useState(false);
   const [pendingTrashIndex, setPendingTrashIndex] = useState<number | null>(null);
   const [watchingAd, setWatchingAd] = useState(false);
@@ -562,6 +564,7 @@ const App: React.FC = () => {
     setShowAllClear(false);
     setTrashUses(1);
     setShuffleUses(3);
+    setDeleteBlockUses(1);
   };
 
   const handleNextLevel = () => {
@@ -588,6 +591,59 @@ const App: React.FC = () => {
     setShowAllClear(false);
     setTrashUses(1);
     setShuffleUses(3);
+    setDeleteBlockUses(1);
+  };
+
+  // Handle deleting a single block from the board
+  const handleDeleteBlock = (x: number, y: number) => {
+    const tile = gameState.grid[y][x];
+    if (!tile) return;
+
+    setDeleteBlockMode(false);
+    setDeleteBlockUses(prev => prev - 1);
+
+    // Spawn particles at the tile position
+    if (boardRef.current) {
+      const rect = boardRef.current.getBoundingClientRect();
+      const cellSize = rect.width / GRID_SIZE;
+      const cellCenterX = rect.left + (x * cellSize) + (cellSize / 2);
+      const cellCenterY = rect.top + (y * cellSize) + (cellSize / 2);
+      spawnParticles(cellCenterX, cellCenterY, tile.color, 8);
+
+      // Show floating text
+      setFloatingTexts(prev => [...prev, {
+        id: `delete-${Date.now()}`,
+        text: '+15',
+        x: cellCenterX,
+        y: cellCenterY,
+        color: tile.color
+      }]);
+    }
+
+    triggerShake();
+
+    // Add to clearing tiles for animation
+    setGameState(prev => ({
+      ...prev,
+      clearingTiles: [tile.id],
+      score: prev.score + 15,
+      objectives: prev.objectives.map(obj =>
+        obj.color === tile.color ? { ...obj, current: obj.current + 1 } : obj
+      )
+    }));
+
+    // Remove tile after animation
+    setTimeout(() => {
+      setGameState(prev => {
+        const newGrid = prev.grid.map(row => [...row]);
+        newGrid[y][x] = null;
+        return {
+          ...prev,
+          grid: newGrid,
+          clearingTiles: []
+        };
+      });
+    }, 200);
   };
 
   // Handle clicking on a booster to activate it
@@ -2020,10 +2076,17 @@ const App: React.FC = () => {
               return (
                 <div
                   key={`${x}-${y}`}
-                  onClick={() => booster && !shufflePhase && activateBooster(booster)}
+                  onClick={() => {
+                    if (deleteBlockMode && cell && !booster) {
+                      handleDeleteBlock(x, y);
+                    } else if (booster && !shufflePhase && !deleteBlockMode) {
+                      activateBooster(booster);
+                    }
+                  }}
                   className={`
                     relative
-                    ${booster && !shufflePhase ? 'cursor-pointer active:scale-95' : ''}
+                    ${booster && !shufflePhase && !deleteBlockMode ? 'cursor-pointer active:scale-95' : ''}
+                    ${deleteBlockMode && cell && !booster ? 'cursor-pointer z-50 hover:scale-110 hover:brightness-125' : ''}
                     ${shufflePhase === 'levitating' && cell ? 'z-20 shadow-lg' : ''}
                   `}
                   style={{
@@ -2394,14 +2457,32 @@ const App: React.FC = () => {
 
         {/* Powerup Buttons */}
         <div className="flex justify-center gap-6 mt-4">
-          {/* Shuffle Button */}
+          {/* Delete Block Button */}
           <button
-            onClick={() => shuffleUses > 0 && !shufflePhase && !trashSelectMode && activateShuffle()}
-            disabled={shuffleUses <= 0 || !!shufflePhase || trashSelectMode}
+            onClick={() => deleteBlockUses > 0 && !shufflePhase && !trashSelectMode && !deleteBlockMode && setDeleteBlockMode(true)}
+            disabled={deleteBlockUses <= 0 || !!shufflePhase || trashSelectMode || deleteBlockMode}
             className={`
               w-16 h-16 rounded-full flex items-center justify-center relative
               transition-all duration-200 active:scale-95
-              ${shuffleUses > 0 && !shufflePhase ? 'bg-gradient-to-br from-purple-500 to-indigo-600 shadow-lg shadow-purple-500/30' : 'bg-slate-700 opacity-50'}
+              ${deleteBlockUses > 0 && !deleteBlockMode ? 'bg-gradient-to-br from-cyan-500 to-blue-600 shadow-lg shadow-cyan-500/30' : 'bg-slate-700 opacity-50'}
+            `}
+          >
+            <i className="fa-solid fa-crosshairs text-2xl text-white"></i>
+            {deleteBlockUses > 0 && (
+              <div className="absolute -top-1 -right-1 w-5 h-5 bg-yellow-400 rounded-full flex items-center justify-center text-[10px] font-bold text-black">
+                {deleteBlockUses}
+              </div>
+            )}
+          </button>
+
+          {/* Shuffle Button */}
+          <button
+            onClick={() => shuffleUses > 0 && !shufflePhase && !trashSelectMode && !deleteBlockMode && activateShuffle()}
+            disabled={shuffleUses <= 0 || !!shufflePhase || trashSelectMode || deleteBlockMode}
+            className={`
+              w-16 h-16 rounded-full flex items-center justify-center relative
+              transition-all duration-200 active:scale-95
+              ${shuffleUses > 0 && !shufflePhase && !deleteBlockMode ? 'bg-gradient-to-br from-purple-500 to-indigo-600 shadow-lg shadow-purple-500/30' : 'bg-slate-700 opacity-50'}
             `}
           >
             <i className="fa-solid fa-shuffle text-2xl text-white"></i>
@@ -2414,12 +2495,12 @@ const App: React.FC = () => {
 
           {/* Trash Button */}
           <button
-            onClick={() => trashUses > 0 && !shufflePhase && !trashSelectMode && setTrashSelectMode(true)}
-            disabled={trashUses <= 0 || !!shufflePhase || trashSelectMode}
+            onClick={() => trashUses > 0 && !shufflePhase && !trashSelectMode && !deleteBlockMode && setTrashSelectMode(true)}
+            disabled={trashUses <= 0 || !!shufflePhase || trashSelectMode || deleteBlockMode}
             className={`
               w-16 h-16 rounded-full flex items-center justify-center relative
               transition-all duration-200 active:scale-95
-              ${trashUses > 0 && !trashSelectMode ? 'bg-gradient-to-br from-red-500 to-orange-600 shadow-lg shadow-red-500/30' : 'bg-slate-700 opacity-50'}
+              ${trashUses > 0 && !trashSelectMode && !deleteBlockMode ? 'bg-gradient-to-br from-red-500 to-orange-600 shadow-lg shadow-red-500/30' : 'bg-slate-700 opacity-50'}
             `}
           >
             <i className="fa-solid fa-trash text-2xl text-white"></i>
@@ -2430,6 +2511,19 @@ const App: React.FC = () => {
             )}
           </button>
         </div>
+
+        {/* Delete Block Overlay */}
+        {deleteBlockMode && (
+          <div
+            className="fixed inset-0 bg-black/70 z-40"
+            onClick={() => setDeleteBlockMode(false)}
+          >
+            <div className="absolute top-8 left-0 right-0 text-center text-white pointer-events-none">
+              <p className="text-xl font-bold mb-2">Select a block to destroy</p>
+              <p className="text-sm text-slate-400">Tap a block or anywhere to cancel</p>
+            </div>
+          </div>
+        )}
 
         {/* Trash Select Overlay */}
         {trashSelectMode && (
