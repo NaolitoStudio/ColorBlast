@@ -2941,6 +2941,8 @@ const App: React.FC = () => {
     return null;
   };
 
+  const isEndGameModalVisible = showLevelPopup || (gameState.gameOver && !gameState.levelComplete);
+
   return (
     <div
       className="flex justify-center items-center h-screen w-full select-none overflow-hidden"
@@ -3658,54 +3660,6 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {/* Level Complete Screen */}
-        {showLevelPopup && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100]" onClick={(e) => e.stopPropagation()}>
-            <NineSlice
-              src={theme.panel('panel_main')}
-              {...theme.config('panel_main')}
-              className="p-6 mx-4 max-w-sm w-full text-center"
-            >
-              <div className="text-6xl mb-4">🎉</div>
-              <h2 className="text-3xl font-black mb-1 bg-gradient-to-r from-green-400 to-emerald-500 bg-clip-text text-transparent">
-                LEVEL {gameState.level} COMPLETE!
-              </h2>
-              <p className="text-slate-400 text-sm mb-6 font-medium">All objectives cleared!</p>
-              <div className="bg-slate-800/50 rounded-2xl p-4 w-full mb-6">
-                <span className="text-slate-400 text-[10px] uppercase font-bold tracking-widest block mb-2">Score</span>
-                <span className="text-4xl font-black text-white">{gameState.score}</span>
-              </div>
-              <button
-                onClick={handleNextLevel}
-                className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-black py-4 px-12 rounded-2xl transition-all active:scale-95 shadow-lg"
-              >
-                NEXT LEVEL →
-              </button>
-            </NineSlice>
-          </div>
-        )}
-
-        {/* Game Over Screen */}
-        {gameState.gameOver && !gameState.levelComplete && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100]" onClick={(e) => e.stopPropagation()}>
-            <div className="bg-slate-900 rounded-3xl p-6 mx-4 max-w-sm w-full border border-slate-700 shadow-2xl text-center">
-              <h2 className="text-4xl font-black mb-1 text-white">GAME OVER</h2>
-              <p className="text-slate-400 text-sm mb-8 font-medium">
-                {gameState.moves <= 0 ? 'Out of moves!' : 'No valid moves left!'}
-              </p>
-              <div className="bg-slate-800 rounded-2xl p-6 w-full mb-8 border border-slate-700">
-                <span className="text-slate-500 text-[10px] uppercase font-bold tracking-widest block mb-2">Final Score</span>
-                <span className="text-5xl font-black text-white">{gameState.score}</span>
-              </div>
-              <button
-                onClick={handleRestart}
-                className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-4 px-12 rounded-2xl transition-all active:scale-95"
-              >
-                PLAY AGAIN
-              </button>
-            </div>
-          </div>
-        )}
       </ResponsiveNineSlicePanel>
 
 
@@ -3769,6 +3723,7 @@ const App: React.FC = () => {
         widthPercent={responsive.rackWidthPercent}
         className="w-full flex justify-center items-center"
         style={{
+          pointerEvents: isEndGameModalVisible ? 'none' : undefined,
           paddingLeft: `${responsive.rackPaddingX}px`,
           paddingRight: `${responsive.rackPaddingX}px`,
           paddingTop: `${responsive.layoutGap * 0.35}px`,
@@ -3826,6 +3781,7 @@ const App: React.FC = () => {
       <div
         className="fixed left-1/2 z-20 flex -translate-x-1/2 justify-center"
         style={{
+          pointerEvents: isEndGameModalVisible ? 'none' : undefined,
           bottom: `${responsive.powerupBottomOffset}px`,
           width: `${responsive.powerupRowWidth}px`,
           gap: `${responsive.powerupGap}px`,
@@ -4065,6 +4021,55 @@ const App: React.FC = () => {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Level Complete Screen */}
+      {showLevelPopup && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[210]" onClick={(e) => e.stopPropagation()}>
+          <NineSlice
+            src={theme.panel('panel_main')}
+            {...theme.config('panel_main')}
+            className="p-6 mx-4 max-w-sm w-full text-center"
+          >
+            <div className="text-6xl mb-4">🎉</div>
+            <h2 className="text-3xl font-black mb-1 bg-gradient-to-r from-green-400 to-emerald-500 bg-clip-text text-transparent">
+              LEVEL {gameState.level} COMPLETE!
+            </h2>
+            <p className="text-slate-400 text-sm mb-6 font-medium">All objectives cleared!</p>
+            <div className="bg-slate-800/50 rounded-2xl p-4 w-full mb-6">
+              <span className="text-slate-400 text-[10px] uppercase font-bold tracking-widest block mb-2">Score</span>
+              <span className="text-4xl font-black text-white">{gameState.score}</span>
+            </div>
+            <button
+              onClick={handleNextLevel}
+              className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-black py-4 px-12 rounded-2xl transition-all active:scale-95 shadow-lg"
+            >
+              NEXT LEVEL →
+            </button>
+          </NineSlice>
+        </div>
+      )}
+
+      {/* Game Over Screen */}
+      {gameState.gameOver && !gameState.levelComplete && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[210]" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-slate-900 rounded-3xl p-6 mx-4 max-w-sm w-full border border-slate-700 shadow-2xl text-center">
+            <h2 className="text-4xl font-black mb-1 text-white">GAME OVER</h2>
+            <p className="text-slate-400 text-sm mb-8 font-medium">
+              {gameState.moves <= 0 ? 'Out of moves!' : 'No valid moves left!'}
+            </p>
+            <div className="bg-slate-800 rounded-2xl p-6 w-full mb-8 border border-slate-700">
+              <span className="text-slate-500 text-[10px] uppercase font-bold tracking-widest block mb-2">Final Score</span>
+              <span className="text-5xl font-black text-white">{gameState.score}</span>
+            </div>
+            <button
+              onClick={handleRestart}
+              className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-4 px-12 rounded-2xl transition-all active:scale-95"
+            >
+              PLAY AGAIN
+            </button>
           </div>
         </div>
       )}
