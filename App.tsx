@@ -45,6 +45,329 @@ interface FloatingText {
   color: string;
 }
 
+type SuperballAnimationState = {
+  booster: Booster;
+  affectedCells: Set<string>;
+  phase: 'buildup' | 'explode';
+};
+
+const getBoardCellMetrics = (board: HTMLDivElement, x: number, y: number) => {
+  const cellEl = board.querySelector<HTMLDivElement>(`[data-cell="${x},${y}"]`);
+  if (cellEl) {
+    const r = cellEl.getBoundingClientRect();
+    return {
+      centerX: r.left + (r.width / 2),
+      centerY: r.top + (r.height / 2),
+      width: r.width,
+      height: r.height
+    };
+  }
+
+  const rect = board.getBoundingClientRect();
+  const cellSize = rect.width / GRID_SIZE;
+  return {
+    centerX: rect.left + (x * cellSize) + (cellSize / 2),
+    centerY: rect.top + (y * cellSize) + (cellSize / 2),
+    width: cellSize,
+    height: cellSize
+  };
+};
+
+// Lightning rays component for superball animation
+const LightningRays: React.FC<{
+  booster: Booster;
+  affectedCells: Set<string>;
+  boardRef: React.RefObject<HTMLDivElement>;
+  phase: 'buildup' | 'explode';
+}> = ({ booster, affectedCells, boardRef, phase }) => {
+  const [tick, setTick] = useState(0);
+
+  // Refresh rays at a moderate pace to avoid over-chaotic flicker
+  useEffect(() => {
+    if (phase !== 'buildup') return;
+    const interval = setInterval(() => setTick(t => t + 1), 70);
+    return () => clearInterval(interval);
+  }, [phase]);
+
+  if (phase !== 'buildup' || !boardRef.current) return null;
+
+  const rect = boardRef.current.getBoundingClientRect();
+  const cellSize = rect.width / GRID_SIZE;
+  const boosterMetrics = getBoardCellMetrics(boardRef.current, booster.x, booster.y);
+  const boosterX = boosterMetrics.centerX;
+  const boosterY = boosterMetrics.centerY;
+
+  const toPath = (points: Point[]) => {
+    if (points.length === 0) return '';
+    let path = `M ${points[0].x} ${points[0].y}`;
+    for (let i = 1; i < points.length; i++) {
+      path += ` L ${points[i].x} ${points[i].y}`;
+    }
+    return path;
+  };
+
+  const generateDetailedBolt = (x1: number, y1: number, x2: number, y2: number) => {
+    const secondaryBranchesEnabled = false;
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist === 0) {
+      return {
+        mainPath: `M ${x1} ${y1}`,
+        branchPaths: [] as string[],
+        intensity: 1,
+        thickness: 1
+      };
+    }
+
+    const normalX = dx / dist;
+    const normalY = dy / dist;
+    const perpX = -normalY;
+    const perpY = normalX;
+    const segments = Math.max(6, Math.floor(dist / 15));
+    const maxOffset = Math.min(11, 3 + dist * 0.055);
+    const points: Point[] = [{ x: x1, y: y1 }];
+
+    for (let s = 1; s < segments; s++) {
+      const t = s / segments;
+      const baseX = x1 + dx * t;
+      const baseY = y1 + dy * t;
+      const centerBias = 0.7 + Math.sin(Math.PI * t) * 0.25;
+      const chaos = (Math.random() - 0.5) * 2 * maxOffset * centerBias;
+      const wave = Math.sin((t * Math.PI * 2) + (tick * 0.25)) * maxOffset * 0.05;
+
+      points.push({
+        x: baseX + perpX * (chaos + wave),
+        y: baseY + perpY * (chaos + wave)
+      });
+    }
+    points.push({ x: x2, y: y2 });
+
+    const branchCount = secondaryBranchesEnabled
+      ? Math.min(2, Math.max(1, Math.floor(dist / 140) + 1))
+      : 0;
+    const branchPaths: string[] = [];
+    for (let b = 0; b < branchCount; b++) {
+      const maxAnchorIndex = points.length - 3;
+      const anchorIndex = Math.min(
+        maxAnchorIndex,
+        Math.max(2, Math.floor(Math.random() * (maxAnchorIndex - 1)) + 2)
+      );
+      const anchor = points[anchorIndex];
+      const prev = points[Math.max(0, anchorIndex - 1)];
+      const next = points[Math.min(points.length - 1, anchorIndex + 1)];
+      const localDx = next.x - prev.x;
+      const localDy = next.y - prev.y;
+      const localDist = Math.sqrt(localDx * localDx + localDy * localDy) || 1;
+      const localDirX = localDx / localDist;
+      const localDirY = localDy / localDist;
+
+      // Branches should keep moving forward-ish, then diverge (not perpendicular spikes).
+      const branchSign = Math.random() < 0.5 ? -1 : 1;
+      const branchAngle = branchSign * (0.35 + Math.random() * 0.55); // ~20deg to ~51deg
+      const branchDirX = localDirX * Math.cos(branchAngle) - localDirY * Math.sin(branchAngle);
+      const branchDirY = localDirX * Math.sin(branchAngle) + localDirY * Math.cos(branchAngle);
+      const branchPerpX = -branchDirY;
+      const branchPerpY = branchDirX;
+
+      const branchLength = dist * (0.08 + Math.random() * 0.10);
+      const branchSegments = 2 + (Math.random() < 0.45 ? 1 : 0);
+      const branchPoints: Point[] = [{ x: anchor.x, y: anchor.y }];
+
+      for (let s = 1; s <= branchSegments; s++) {
+        const t = s / branchSegments;
+        const len = branchLength * t;
+        const jitter = (Math.random() - 0.5) * maxOffset * (0.1 + t * 0.05);
+        const x = anchor.x + branchDirX * len + branchPerpX * jitter;
+        const y = anchor.y + branchDirY * len + branchPerpY * jitter;
+        branchPoints.push({ x, y });
+      }
+
+      branchPaths.push(toPath(branchPoints));
+
+      // Secondary branching: 1-2 forks with their own zig-zag.
+      if (branchPoints.length > 2 && Math.random() < 0.9) {
+        const forkCount = 1 + (Math.random() < 0.45 ? 1 : 0);
+        for (let f = 0; f < forkCount; f++) {
+          const forkAnchorIndex = 1 + Math.floor(Math.random() * (branchPoints.length - 2));
+          const forkAnchor = branchPoints[forkAnchorIndex];
+          const forkSign = Math.random() < 0.5 ? -1 : 1;
+          const forkAngle = forkSign * (0.38 + Math.random() * 0.4); // ~22deg to ~45deg from branch
+          const forkDirX = branchDirX * Math.cos(forkAngle) - branchDirY * Math.sin(forkAngle);
+          const forkDirY = branchDirX * Math.sin(forkAngle) + branchDirY * Math.cos(forkAngle);
+          const forkPerpX = -forkDirY;
+          const forkPerpY = forkDirX;
+          const forkLen = branchLength * (0.28 + Math.random() * 0.24);
+          const forkSegments = 2 + (Math.random() < 0.4 ? 1 : 0);
+          const forkPoints: Point[] = [{ x: forkAnchor.x, y: forkAnchor.y }];
+
+          for (let s = 1; s <= forkSegments; s++) {
+            const t = s / forkSegments;
+            const len = forkLen * t;
+            const jitter = (Math.random() - 0.5) * maxOffset * (0.08 + t * 0.05);
+            forkPoints.push({
+              x: forkAnchor.x + forkDirX * len + forkPerpX * jitter,
+              y: forkAnchor.y + forkDirY * len + forkPerpY * jitter
+            });
+          }
+
+          branchPaths.push(toPath(forkPoints));
+
+          // Occasional tertiary twig from a secondary fork.
+          if (forkPoints.length > 2 && Math.random() < 0.45) {
+            const twigAnchorIndex = 1 + Math.floor(Math.random() * (forkPoints.length - 2));
+            const twigAnchor = forkPoints[twigAnchorIndex];
+            const twigSign = Math.random() < 0.5 ? -1 : 1;
+            const twigAngle = twigSign * (0.45 + Math.random() * 0.35); // ~26deg to ~46deg
+            const twigDirX = forkDirX * Math.cos(twigAngle) - forkDirY * Math.sin(twigAngle);
+            const twigDirY = forkDirX * Math.sin(twigAngle) + forkDirY * Math.cos(twigAngle);
+            const twigLen = forkLen * (0.38 + Math.random() * 0.22);
+            const twigEndX = twigAnchor.x + twigDirX * twigLen + forkPerpX * ((Math.random() - 0.5) * maxOffset * 0.05);
+            const twigEndY = twigAnchor.y + twigDirY * twigLen + forkPerpY * ((Math.random() - 0.5) * maxOffset * 0.05);
+            branchPaths.push(`M ${twigAnchor.x} ${twigAnchor.y} L ${twigEndX} ${twigEndY}`);
+          }
+        }
+      }
+    }
+
+    return {
+      mainPath: toPath(points),
+      branchPaths,
+      intensity: 0.72 + Math.random() * 0.2,
+      thickness: 1.5 + Math.random() * 0.45
+    };
+  };
+
+  return (
+    <svg
+      className="fixed inset-0 pointer-events-none"
+      style={{ zIndex: 65, width: '100vw', height: '100vh' }}
+    >
+      {Array.from(affectedCells).map((cellKey, targetIndex) => {
+        const [cx, cy] = cellKey.split(',').map(Number);
+        if (cx === booster.x && cy === booster.y) return null;
+
+        const cellCenterX = rect.left + (cx * cellSize) + (cellSize / 2);
+        const cellCenterY = rect.top + (cy * cellSize) + (cellSize / 2);
+        const sourceX = boosterX + ((Math.random() - 0.5) * 3.2);
+        const sourceY = boosterY + ((Math.random() - 0.5) * 3.2);
+
+        // Some targets get one strike, others get 2-4 simultaneous strikes.
+        const roll = Math.random();
+        const boltCount = roll < 0.55 ? 1 : roll < 0.8 ? 2 : roll < 0.94 ? 3 : 4;
+
+        // Distinct landing zones inside a tile so multi-strikes don't hit the same exact point.
+        const impactSlots = [
+          { x: -0.26, y: -0.2 },
+          { x: 0.26, y: -0.18 },
+          { x: -0.22, y: 0.24 },
+          { x: 0.24, y: 0.22 },
+          { x: 0, y: -0.28 },
+          { x: 0, y: 0.28 },
+          { x: -0.3, y: 0 },
+          { x: 0.3, y: 0 },
+          { x: 0, y: 0 }
+        ];
+
+        const selectedSlots = boltCount === 1
+          ? [{ x: 0, y: 0 }]
+          : [...impactSlots]
+              .sort(() => Math.random() - 0.5)
+              .slice(0, boltCount);
+
+        const landingPoints = selectedSlots.map(slot => ({
+          x: cellCenterX + (slot.x * cellSize) + ((Math.random() - 0.5) * cellSize * 0.06),
+          y: cellCenterY + (slot.y * cellSize) + ((Math.random() - 0.5) * cellSize * 0.06)
+        }));
+
+        return (
+          <g key={`${cellKey}-${tick}`} style={{ mixBlendMode: 'screen' }}>
+            {landingPoints.map((landing, boltIndex) => {
+              const bolt = generateDetailedBolt(sourceX, sourceY, landing.x, landing.y);
+              const widthScale = 0.78 + (Math.random() * 0.72);
+              return (
+                <g key={`${cellKey}-${tick}-${boltIndex}`}>
+                  <path
+                    d={bolt.mainPath}
+                    fill="none"
+                    stroke="#f59e0b"
+                    strokeWidth={bolt.thickness * 8 * widthScale}
+                    opacity={0.2 * bolt.intensity}
+                    style={{ filter: 'blur(8px)' }}
+                  />
+                  <path
+                    d={bolt.mainPath}
+                    fill="none"
+                    stroke="#facc15"
+                    strokeWidth={bolt.thickness * 3.6 * widthScale}
+                    opacity={0.45 * bolt.intensity}
+                    style={{ filter: 'blur(2px)' }}
+                  />
+                  <path
+                    d={bolt.mainPath}
+                    fill="none"
+                    stroke="#fef9c3"
+                    strokeWidth={bolt.thickness * 1.7 * widthScale}
+                    opacity={0.9 * bolt.intensity}
+                  />
+                  <path
+                    d={bolt.mainPath}
+                    fill="none"
+                    stroke="#ffffff"
+                    strokeWidth={bolt.thickness * 0.8 * widthScale}
+                    opacity={0.95 * bolt.intensity}
+                  />
+                  <circle cx={landing.x} cy={landing.y} r={5.5} fill="#fde68a" opacity={0.24} />
+                  <circle cx={landing.x} cy={landing.y} r={2.2} fill="#ffffff" opacity={0.8} />
+                </g>
+              );
+            })}
+          </g>
+        );
+      })}
+    </svg>
+  );
+};
+
+const SuperballForeground: React.FC<{
+  superballAnimation: SuperballAnimationState | null;
+  boardRef: React.RefObject<HTMLDivElement>;
+}> = ({ superballAnimation, boardRef }) => {
+  if (!superballAnimation || superballAnimation.phase !== 'buildup' || !boardRef.current) return null;
+
+  const metrics = getBoardCellMetrics(
+    boardRef.current,
+    superballAnimation.booster.x,
+    superballAnimation.booster.y
+  );
+
+  return (
+    <div
+      className="fixed pointer-events-none"
+      style={{
+        left: metrics.centerX,
+        top: metrics.centerY,
+        width: metrics.width,
+        height: metrics.height,
+        transform: 'translate(-50%, -50%)',
+        zIndex: 75,
+        filter: 'drop-shadow(1px -1px 0 rgba(255, 255, 255, 0.72)) drop-shadow(-1px 1px 0 rgba(254, 240, 138, 0.64)) drop-shadow(1px 1px 0 rgba(250, 204, 21, 0.6)) drop-shadow(0 0 12px rgba(251, 191, 36, 0.9)) drop-shadow(0 0 8px rgba(251, 191, 36, 0.22))'
+      }}
+    >
+      <img
+        src={UI_ASSETS.SUPERBALL}
+        alt="Superball"
+        className="w-[85%] h-[85%] object-contain superball-buildup"
+        style={{
+          margin: '7.5%',
+          filter: 'drop-shadow(1px -1px 0 rgba(255, 255, 255, 0.8)) drop-shadow(-2px 1px 0 rgba(254, 240, 138, 0.78)) drop-shadow(2px 0 0 rgba(250, 204, 21, 0.7)) drop-shadow(0 0 4px rgba(251, 191, 36, 0.78)) drop-shadow(0 0 8px rgba(251, 191, 36, 0.52))',
+          animation: 'superballBuildup 1.5s ease-in forwards'
+        }}
+      />
+    </div>
+  );
+};
+
 const App: React.FC = () => {
   // Unique ID counter for particles and other elements
   const particleIdCounter = useRef(0);
@@ -60,8 +383,7 @@ const App: React.FC = () => {
     return {
       grid: initialGrid,
       boosters: [
-        { id: 'test-superball-1', type: 'color_ball', x: 2, y: 2, color: Color.BLUE },
-        { id: 'test-superball-2', type: 'color_ball', x: 5, y: 5, color: Color.ORANGE }
+        { id: 'test-superball-1', type: 'color_ball', x: 3, y: 3, color: Color.BLUE }
       ],
       score: 0,
       highScore: Number(localStorage.getItem('highScore')) || 0,
@@ -105,6 +427,7 @@ const App: React.FC = () => {
   const [showOutOfMovesPopup, setShowOutOfMovesPopup] = useState(false);
   const [watchingMovesAd, setWatchingMovesAd] = useState(false);
   const [trashingAllPieces, setTrashingAllPieces] = useState(false);
+  const [superballAnimation, setSuperballAnimation] = useState<SuperballAnimationState | null>(null);
   const [shufflePhase, setShufflePhase] = useState<'darkening' | 'levitating' | 'scrambling' | 'landing' | null>(null);
   const [shuffleAnimations, setShuffleAnimations] = useState<Array<{
     tile: { color: Color; id: string };
@@ -189,7 +512,7 @@ const App: React.FC = () => {
     setTimeout(() => setIsShaking(false), 300);
   };
 
-  const spawnParticles = (x: number, y: number, color: string, count: number) => {
+  const spawnParticles = (x: number, y: number, color: string, count: number, sizeMultiplier: number = 1) => {
     // Convert icon path to actual color for particles
     const particleColor = isIconPath(color) ? getParticleColor(color) : color;
 
@@ -206,7 +529,7 @@ const App: React.FC = () => {
         color: particleColor,
         life: 40 + Math.random() * 20,
         maxLife: 60,
-        size: Math.random() * 6 + 4
+        size: (Math.random() * 6 + 4) * sizeMultiplier
       });
     }
     setParticles(prev => [...prev, ...newParticles]);
@@ -814,7 +1137,20 @@ const App: React.FC = () => {
   // Handle clicking on a booster to activate it
   const activateBooster = (booster: Booster) => {
     if (celebrating || showLevelPopup || showAllClear || gameState.gameOver) return;
-    if (affectedCells.size > 0) return; // Already activating
+    if (affectedCells.size > 0 || superballAnimation) return; // Already activating
+
+    // Special animation for color_ball (superball)
+    if (booster.type === 'color_ball') {
+      const affected = getBoosterAffectedCells(booster);
+      setSuperballAnimation({ booster, affectedCells: affected, phase: 'buildup' });
+
+      // After buildup animation (1.5s), explode
+      setTimeout(() => {
+        setSuperballAnimation(null);
+        executeBoosterExplosion(booster);
+      }, 1500);
+      return;
+    }
 
     // Calculate affected cells for visual indicator
     const previewCells = getBoosterAffectedCells(booster);
@@ -919,6 +1255,18 @@ const App: React.FC = () => {
         const cellSize = rect.width / GRID_SIZE;
         const boosterCenterX = rect.left + (booster.x * cellSize) + (cellSize / 2);
         const boosterCenterY = rect.top + (booster.y * cellSize) + (cellSize / 2);
+
+        // Particles for the booster itself (5 colors burst for superball)
+        if (booster.type === 'color_ball') {
+          const gameColors = ['#3b82f6', '#22c55e', '#a855f7', '#eab308', '#f97316']; // Blue, Green, Purple, Yellow, Orange
+          for (let i = 0; i < 4; i++) {
+            setTimeout(() => {
+              gameColors.forEach(color => {
+                spawnParticles(boosterCenterX, boosterCenterY, color, 6, 0.5);
+              });
+            }, i * 40);
+          }
+        }
 
         // Particles for each exploded block
         pointsFromThisBooster.forEach(p => {
@@ -2180,15 +2528,191 @@ const App: React.FC = () => {
         }
         @keyframes superballGlow {
           0%, 100% {
-            filter: drop-shadow(0 0 4px rgba(251, 191, 36, 0.7)) drop-shadow(0 0 8px rgba(251, 191, 36, 0.4));
+            filter:
+              drop-shadow(1px -1px 0 rgba(255, 255, 255, 0.75))
+              drop-shadow(-2px 1px 0 rgba(254, 240, 138, 0.72))
+              drop-shadow(2px 1px 0 rgba(250, 204, 21, 0.62))
+              drop-shadow(0 0 4px rgba(251, 191, 36, 0.72))
+              drop-shadow(0 0 7px rgba(251, 191, 36, 0.45));
+          }
+          25% {
+            filter:
+              drop-shadow(-1px -1px 0 rgba(255, 255, 255, 0.78))
+              drop-shadow(2px 0px 0 rgba(254, 240, 138, 0.75))
+              drop-shadow(-2px 2px 0 rgba(250, 204, 21, 0.66))
+              drop-shadow(0 0 4px rgba(251, 191, 36, 0.76))
+              drop-shadow(0 0 7px rgba(251, 191, 36, 0.5));
           }
           50% {
-            filter: drop-shadow(0 0 4px rgba(251, 191, 36, 0.85)) drop-shadow(0 0 8px rgba(251, 191, 36, 0.55));
+            filter:
+              drop-shadow(0px -2px 0 rgba(255, 255, 255, 0.82))
+              drop-shadow(-2px 1px 0 rgba(254, 240, 138, 0.8))
+              drop-shadow(2px -1px 0 rgba(250, 204, 21, 0.7))
+              drop-shadow(0 0 4px rgba(251, 191, 36, 0.8))
+              drop-shadow(0 0 8px rgba(251, 191, 36, 0.55));
+          }
+          75% {
+            filter:
+              drop-shadow(1px 0px 0 rgba(255, 255, 255, 0.78))
+              drop-shadow(-1px -2px 0 rgba(254, 240, 138, 0.77))
+              drop-shadow(2px 2px 0 rgba(250, 204, 21, 0.67))
+              drop-shadow(0 0 4px rgba(251, 191, 36, 0.78))
+              drop-shadow(0 0 7px rgba(251, 191, 36, 0.52));
           }
         }
         @keyframes superballPulse {
           0%, 100% { transform: scale(1); }
           50% { transform: scale(1.03); }
+        }
+        @keyframes superballBuildup {
+          0% {
+            transform: translate(0, 0) rotate(0deg);
+            filter:
+              drop-shadow(1px -1px 0 rgba(255, 255, 255, 0.75))
+              drop-shadow(-2px 1px 0 rgba(254, 240, 138, 0.72))
+              drop-shadow(2px 1px 0 rgba(250, 204, 21, 0.62))
+              drop-shadow(0 0 4px rgba(251, 191, 36, 0.72))
+              drop-shadow(0 0 7px rgba(251, 191, 36, 0.45));
+          }
+          10% {
+            transform: translate(-0.12px, 0.06px) rotate(-0.18deg);
+            filter:
+              drop-shadow(-1px -1px 0 rgba(255, 255, 255, 0.78))
+              drop-shadow(2px 0px 0 rgba(254, 240, 138, 0.75))
+              drop-shadow(-2px 2px 0 rgba(250, 204, 21, 0.66))
+              drop-shadow(0 0 4px rgba(251, 191, 36, 0.76))
+              drop-shadow(0 0 7px rgba(251, 191, 36, 0.5));
+          }
+          20% {
+            transform: translate(0.2px, -0.12px) rotate(0.32deg);
+            filter:
+              drop-shadow(0px -2px 0 rgba(255, 255, 255, 0.8))
+              drop-shadow(-2px 1px 0 rgba(254, 240, 138, 0.79))
+              drop-shadow(2px -1px 0 rgba(250, 204, 21, 0.69))
+              drop-shadow(0 0 4px rgba(251, 191, 36, 0.8))
+              drop-shadow(0 0 8px rgba(251, 191, 36, 0.56));
+          }
+          30% {
+            transform: translate(-0.32px, 0.18px) rotate(-0.52deg);
+            filter:
+              drop-shadow(1px 0px 0 rgba(255, 255, 255, 0.82))
+              drop-shadow(-1px -2px 0 rgba(254, 240, 138, 0.8))
+              drop-shadow(2px 2px 0 rgba(250, 204, 21, 0.72))
+              drop-shadow(0 0 5px rgba(251, 191, 36, 0.84))
+              drop-shadow(0 0 8px rgba(251, 191, 36, 0.6));
+          }
+          40% {
+            transform: translate(0.46px, -0.24px) rotate(0.76deg);
+            filter:
+              drop-shadow(-1px 1px 0 rgba(255, 255, 255, 0.85))
+              drop-shadow(2px -1px 0 rgba(254, 240, 138, 0.83))
+              drop-shadow(-2px 2px 0 rgba(250, 204, 21, 0.75))
+              drop-shadow(0 0 5px rgba(251, 191, 36, 0.88))
+              drop-shadow(0 0 9px rgba(251, 191, 36, 0.65));
+          }
+          50% {
+            transform: translate(-0.62px, 0.34px) rotate(-1deg);
+            filter:
+              drop-shadow(0px -2px 0 rgba(255, 255, 255, 0.88))
+              drop-shadow(-2px 1px 0 rgba(254, 240, 138, 0.86))
+              drop-shadow(2px 0px 0 rgba(250, 204, 21, 0.78))
+              drop-shadow(0 0 5px rgba(251, 191, 36, 0.92))
+              drop-shadow(0 0 9px rgba(251, 191, 36, 0.7));
+          }
+          60% {
+            transform: translate(0.78px, -0.42px) rotate(1.28deg);
+            filter:
+              drop-shadow(1px -1px 0 rgba(255, 255, 255, 0.9))
+              drop-shadow(-2px 0px 0 rgba(254, 240, 138, 0.88))
+              drop-shadow(2px 1px 0 rgba(250, 204, 21, 0.8))
+              drop-shadow(0 0 6px rgba(251, 191, 36, 0.95))
+              drop-shadow(0 0 10px rgba(251, 191, 36, 0.74));
+          }
+          70% {
+            transform: translate(-0.92px, 0.5px) rotate(-1.56deg);
+            filter:
+              drop-shadow(-1px -1px 0 rgba(255, 255, 255, 0.94))
+              drop-shadow(2px -1px 0 rgba(254, 240, 138, 0.9))
+              drop-shadow(-2px 1px 0 rgba(250, 204, 21, 0.82))
+              drop-shadow(0 0 6px rgba(251, 191, 36, 0.98))
+              drop-shadow(0 0 10px rgba(251, 191, 36, 0.78));
+          }
+          80% {
+            transform: translate(1.08px, -0.6px) rotate(1.84deg);
+            filter:
+              drop-shadow(1px 1px 0 rgba(255, 255, 255, 0.97))
+              drop-shadow(-2px 0px 0 rgba(254, 240, 138, 0.93))
+              drop-shadow(2px -1px 0 rgba(250, 204, 21, 0.84))
+              drop-shadow(0 0 6px rgba(251, 191, 36, 1))
+              drop-shadow(0 0 11px rgba(251, 191, 36, 0.82));
+          }
+          90% {
+            transform: translate(-1.22px, 0.68px) rotate(-2.08deg);
+            filter:
+              drop-shadow(0px -2px 0 rgba(255, 255, 255, 1))
+              drop-shadow(2px 0px 0 rgba(254, 240, 138, 0.96))
+              drop-shadow(-2px 1px 0 rgba(250, 204, 21, 0.87))
+              drop-shadow(0 0 6px rgba(251, 191, 36, 1))
+              drop-shadow(0 0 11px rgba(251, 191, 36, 0.87));
+          }
+          100% {
+            transform: translate(0, 0) rotate(0deg);
+            filter:
+              drop-shadow(1px -1px 0 rgba(255, 255, 255, 1))
+              drop-shadow(-2px 1px 0 rgba(254, 240, 138, 0.98))
+              drop-shadow(2px 0px 0 rgba(250, 204, 21, 0.9))
+              drop-shadow(0 0 6px rgba(251, 191, 36, 1))
+              drop-shadow(0 0 12px rgba(251, 191, 36, 0.9));
+          }
+        }
+        @keyframes cellShakeBuildup {
+          0% { transform: translate(0, 0) rotate(0deg); }
+          4% { transform: translate(-0.12px, 0.05px) rotate(-0.05deg); }
+          8% { transform: translate(0.14px, -0.06px) rotate(0.06deg); }
+          12% { transform: translate(-0.16px, 0.07px) rotate(-0.07deg); }
+          16% { transform: translate(0.18px, -0.08px) rotate(0.08deg); }
+          20% { transform: translate(-0.2px, 0.09px) rotate(-0.09deg); }
+          24% { transform: translate(0.22px, -0.1px) rotate(0.1deg); }
+          28% { transform: translate(-0.24px, 0.11px) rotate(-0.11deg); }
+          32% { transform: translate(0.26px, -0.12px) rotate(0.12deg); }
+          36% { transform: translate(-0.3px, 0.13px) rotate(-0.13deg); }
+          40% { transform: translate(0.34px, -0.15px) rotate(0.15deg); }
+          44% { transform: translate(-0.38px, 0.17px) rotate(-0.17deg); }
+          48% { transform: translate(0.42px, -0.19px) rotate(0.19deg); }
+          52% { transform: translate(-0.46px, 0.21px) rotate(-0.21deg); }
+          56% { transform: translate(0.5px, -0.23px) rotate(0.23deg); }
+          60% { transform: translate(-0.54px, 0.25px) rotate(-0.25deg); }
+          64% { transform: translate(0.74px, -0.34px) rotate(0.34deg); }
+          68% { transform: translate(-0.82px, 0.38px) rotate(-0.38deg); }
+          72% { transform: translate(1px, -0.46px) rotate(0.46deg); }
+          76% { transform: translate(-1.16px, 0.53px) rotate(-0.53deg); }
+          80% { transform: translate(1.34px, -0.61px) rotate(0.61deg); }
+          84% { transform: translate(-1.52px, 0.7px) rotate(-0.7deg); }
+          88% { transform: translate(1.7px, -0.78px) rotate(0.78deg); }
+          92% { transform: translate(-1.88px, 0.86px) rotate(-0.86deg); }
+          96% { transform: translate(2.06px, -0.94px) rotate(0.94deg); }
+          100% { transform: translate(0, 0) rotate(0deg); }
+        }
+        @keyframes cellBrightnessBuildup {
+          0% {
+            filter: brightness(1) saturate(1);
+          }
+          40% {
+            filter: brightness(1.08) saturate(1.05);
+          }
+          75% {
+            filter: brightness(1.18) saturate(1.1);
+          }
+          100% {
+            filter: brightness(1.28) saturate(1.14);
+          }
+        }
+        .superball-buildup {
+          animation: superballBuildup 1.5s ease-in forwards;
+          z-index: 100;
+        }
+        .cell-shake-buildup {
+          animation: cellShakeBuildup 1.5s linear forwards, cellBrightnessBuildup 1.5s ease-in forwards;
         }
         @keyframes piece-shake {
           0%, 100% { transform: translate(0, 0) rotate(0deg); }
@@ -2310,7 +2834,7 @@ const App: React.FC = () => {
           backgroundSize: 'contain',
           backgroundPosition: 'center',
           backgroundRepeat: 'no-repeat',
-          zIndex: shufflePhase ? 40 : undefined
+          zIndex: shufflePhase || superballAnimation ? 40 : undefined
         }}
       >
         <div className="board-grid w-full h-full gap-0.5">
@@ -2319,6 +2843,7 @@ const App: React.FC = () => {
               const ghost = isGhostCell(x, y);
               const booster = gameState.boosters.find(b => b.x === x && b.y === y);
               const isAffected = affectedCells.has(`${x},${y}`);
+              const isSuperballTarget = superballAnimation && superballAnimation.affectedCells.has(`${x},${y}`) && !(booster?.type === 'color_ball');
 
               // Determine if we should use an image
               const cellColor = cell?.color;
@@ -2384,6 +2909,7 @@ const App: React.FC = () => {
               return (
                 <div
                   key={`${x}-${y}`}
+                  data-cell={`${x},${y}`}
                   onClick={() => {
                     if (deleteBlockMode && cell && !booster) {
                       handleDeleteBlock(x, y);
@@ -2395,10 +2921,11 @@ const App: React.FC = () => {
                   }}
                   className={`
                     relative
-                    ${booster && !shufflePhase && !deleteBlockMode && !wildcardMode ? 'cursor-pointer active:scale-95' : ''}
+                    ${booster && !shufflePhase && !deleteBlockMode && !wildcardMode && !superballAnimation ? 'cursor-pointer active:scale-95' : ''}
                     ${deleteBlockMode && cell && !booster ? 'cursor-pointer z-50 hover:scale-110 hover:brightness-125' : ''}
                     ${wildcardMode && cell && !booster ? 'cursor-pointer z-50 hover:scale-110 hover:brightness-125' : ''}
                     ${shufflePhase === 'levitating' && cell ? 'z-20 shadow-lg' : ''}
+                    ${isSuperballTarget ? 'cell-shake-buildup' : ''}
                   `}
                   style={{
                     backgroundColor: bgColor,
@@ -2417,7 +2944,8 @@ const App: React.FC = () => {
                       ? (shufflePhase === 'levitating'
                         ? '0 8px 20px rgba(0,0,0,0.5)'
                         : '0 4px 8px rgba(0,0,0,0.3)')
-                      : undefined
+                      : undefined,
+                    animationDelay: isSuperballTarget ? `${((x + y * 7) % 10) * 0.02}s` : undefined
                   }}
                 >
                   {/* Affected area indicator - shows during booster activation with fade */}
@@ -2452,10 +2980,13 @@ const App: React.FC = () => {
                         <img
                           src={UI_ASSETS.SUPERBALL}
                           alt="Superball"
-                          className="w-[85%] h-[85%] object-contain"
+                          className={`w-[85%] h-[85%] object-contain ${superballAnimation?.booster.id === booster.id ? 'superball-buildup' : ''}`}
                           style={{
-                            filter: 'drop-shadow(0 0 4px rgba(251, 191, 36, 0.8)) drop-shadow(0 0 8px rgba(251, 191, 36, 0.5))',
-                            animation: 'superballGlow 2s ease-in-out infinite, superballPulse 2s ease-in-out infinite'
+                            visibility: superballAnimation?.phase === 'buildup' && superballAnimation.booster.id === booster.id ? 'hidden' : 'visible',
+                            filter: 'none',
+                            animation: superballAnimation?.booster.id === booster.id
+                              ? 'superballBuildup 1.5s ease-in forwards'
+                              : 'none'
                           }}
                         />
                       ) : (
@@ -2856,6 +3387,23 @@ const App: React.FC = () => {
             <p className="text-sm text-slate-400">Tap a block or anywhere to cancel</p>
           </div>
         </div>
+      )}
+
+      {/* Superball Animation Overlay with Lightning Rays */}
+      {superballAnimation?.phase === 'buildup' && (
+        <>
+          <div className="fixed inset-0 bg-black/70 z-30 pointer-events-none" />
+          <LightningRays
+            booster={superballAnimation.booster}
+            affectedCells={superballAnimation.affectedCells}
+            boardRef={boardRef}
+            phase={superballAnimation.phase}
+          />
+          <SuperballForeground
+            superballAnimation={superballAnimation}
+            boardRef={boardRef}
+          />
+        </>
       )}
 
       {/* Shuffle Overlay */}
