@@ -875,6 +875,8 @@ const App: React.FC = () => {
       const delay = 60;
       shuffled.forEach((block, index) => {
         setTimeout(() => {
+          // Play sound every 3-4 blocks for popcorn effect
+          if (index % 3 === 0 || index % 7 === 0) audio.play('match');
           if (boardRef.current) {
             const rect = boardRef.current.getBoundingClientRect();
             const cellSize = rect.width / GRID_SIZE;
@@ -1141,7 +1143,7 @@ const App: React.FC = () => {
           const totalCells = GRID_SIZE * GRID_SIZE;
           const targetTiles = Math.floor(totalCells * levelConfig.gridFill);
           const currentTiles = finalGrid.flat().filter(cell => cell !== null).length;
-          const blocksToAdd = Math.max(3, targetTiles - currentTiles);
+          const blocksToAdd = Math.max(1, Math.min(3, targetTiles - currentTiles));
           const boosterPositions = prev.boosters.map(b => ({ x: b.x, y: b.y }));
           const result = addRandomBlocks(finalGrid, blocksToAdd, prev.level, boosterPositions);
           finalGrid = result.grid;
@@ -1180,7 +1182,7 @@ const App: React.FC = () => {
       // After buildup animation (1.5s), explode
       setTimeout(() => {
         setSuperballAnimation(null);
-        audio.play('superball');
+        audio.play('superball', 0.25);
         executeBoosterExplosion(booster);
       }, 1500);
       return;
@@ -1204,7 +1206,7 @@ const App: React.FC = () => {
     }, 400);
 
     // Execute explosion immediately (simultaneous with indicator)
-    audio.play('activateBooster');
+    audio.play('activateBooster', 0.15);
     executeBoosterExplosion(booster);
   };
 
@@ -1656,6 +1658,7 @@ const App: React.FC = () => {
 
       setTimeout(() => {
         // Calculate and start the shuffle animation with pre-captured positions
+        audio.play('blocksIncoming');
         performShuffle(cellPositions);
         setShufflePhase('scrambling');
       }, 400);
@@ -1949,6 +1952,7 @@ const App: React.FC = () => {
     }
 
     triggerShake();
+    audio.play('match');
 
     // Update state with clearingTiles for animation
     setGameState(prev => {
@@ -2446,7 +2450,7 @@ const App: React.FC = () => {
         const totalCells = GRID_SIZE * GRID_SIZE;
         const targetTiles = Math.floor(totalCells * levelConfig.gridFill);
         const currentTiles = newGrid.flat().filter(cell => cell !== null).length;
-        const blocksToAdd = Math.max(3, targetTiles - currentTiles);
+        const blocksToAdd = Math.max(1, Math.min(3, targetTiles - currentTiles));
         const boosterPositions = gameState.boosters.map(b => ({ x: b.x, y: b.y }));
         const result = addRandomBlocks(newGrid, blocksToAdd, gameState.level, boosterPositions);
         const gridWithNewBlocks = result.grid;
@@ -3173,7 +3177,7 @@ const App: React.FC = () => {
 
         {/* ALL CLEAR Screen */}
         {showAllClear && (
-          <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm rounded-3xl flex flex-col items-center justify-center p-8 text-center z-50">
+          <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm rounded-3xl flex flex-col items-center justify-center p-8 text-center z-50" onClick={(e) => e.stopPropagation()}>
             <div className="text-7xl mb-4 animate-bounce">✨</div>
             <h2
               className="text-4xl font-black mb-2 bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 bg-clip-text text-transparent"
@@ -3191,42 +3195,46 @@ const App: React.FC = () => {
 
         {/* Level Complete Screen */}
         {showLevelPopup && (
-          <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-md rounded-3xl flex flex-col items-center justify-center p-8 text-center z-50">
-            <div className="text-6xl mb-4">🎉</div>
-            <h2 className="text-3xl font-black mb-1 bg-gradient-to-r from-green-400 to-emerald-500 bg-clip-text text-transparent">
-              LEVEL {gameState.level} COMPLETE!
-            </h2>
-            <p className="text-slate-400 text-sm mb-6 font-medium">All objectives cleared!</p>
-            <div className="bg-slate-900 rounded-2xl p-4 w-full mb-6 border border-slate-800">
-              <span className="text-slate-500 text-[10px] uppercase font-bold tracking-widest block mb-2">Score</span>
-              <span className="text-4xl font-black text-white">{gameState.score}</span>
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100]" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-slate-900 rounded-3xl p-6 mx-4 max-w-sm w-full border border-slate-700 shadow-2xl text-center">
+              <div className="text-6xl mb-4">🎉</div>
+              <h2 className="text-3xl font-black mb-1 bg-gradient-to-r from-green-400 to-emerald-500 bg-clip-text text-transparent">
+                LEVEL {gameState.level} COMPLETE!
+              </h2>
+              <p className="text-slate-400 text-sm mb-6 font-medium">All objectives cleared!</p>
+              <div className="bg-slate-800 rounded-2xl p-4 w-full mb-6 border border-slate-700">
+                <span className="text-slate-500 text-[10px] uppercase font-bold tracking-widest block mb-2">Score</span>
+                <span className="text-4xl font-black text-white">{gameState.score}</span>
+              </div>
+              <button
+                onClick={handleNextLevel}
+                className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-black py-4 px-12 rounded-2xl transition-all active:scale-95 shadow-lg"
+              >
+                NEXT LEVEL →
+              </button>
             </div>
-            <button
-              onClick={handleNextLevel}
-              className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-black py-4 px-12 rounded-2xl transition-all active:scale-95 shadow-lg"
-            >
-              NEXT LEVEL →
-            </button>
           </div>
         )}
 
         {/* Game Over Screen */}
         {gameState.gameOver && !gameState.levelComplete && (
-          <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-md rounded-3xl flex flex-col items-center justify-center p-8 text-center z-50">
-            <h2 className="text-4xl font-black mb-1 text-white">GAME OVER</h2>
-            <p className="text-slate-400 text-sm mb-8 font-medium">
-              {gameState.moves <= 0 ? 'Out of moves!' : 'No valid moves left!'}
-            </p>
-            <div className="bg-slate-900 rounded-2xl p-6 w-full mb-8 border border-slate-800">
-              <span className="text-slate-500 text-[10px] uppercase font-bold tracking-widest block mb-2">Final Score</span>
-              <span className="text-5xl font-black text-white">{gameState.score}</span>
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100]" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-slate-900 rounded-3xl p-6 mx-4 max-w-sm w-full border border-slate-700 shadow-2xl text-center">
+              <h2 className="text-4xl font-black mb-1 text-white">GAME OVER</h2>
+              <p className="text-slate-400 text-sm mb-8 font-medium">
+                {gameState.moves <= 0 ? 'Out of moves!' : 'No valid moves left!'}
+              </p>
+              <div className="bg-slate-800 rounded-2xl p-6 w-full mb-8 border border-slate-700">
+                <span className="text-slate-500 text-[10px] uppercase font-bold tracking-widest block mb-2">Final Score</span>
+                <span className="text-5xl font-black text-white">{gameState.score}</span>
+              </div>
+              <button
+                onClick={handleRestart}
+                className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-4 px-12 rounded-2xl transition-all active:scale-95"
+              >
+                PLAY AGAIN
+              </button>
             </div>
-            <button
-              onClick={handleRestart}
-              className="bg-blue-600 hover:bg-blue-500 text-white font-black py-4 px-12 rounded-2xl transition-all active:scale-95"
-            >
-              PLAY AGAIN
-            </button>
           </div>
         )}
       </div>
@@ -3453,7 +3461,7 @@ const App: React.FC = () => {
 
       {/* Ad Popup Modal */}
       {showAdPopup && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100]">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100]" onClick={(e) => e.stopPropagation()}>
           <div className="bg-slate-900 rounded-3xl p-6 mx-4 max-w-sm w-full border border-slate-700 shadow-2xl">
             {watchingAd ? (
               <div className="text-center py-8">
@@ -3497,7 +3505,7 @@ const App: React.FC = () => {
 
       {/* Out of Moves Popup */}
       {showOutOfMovesPopup && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100]">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100]" onClick={(e) => e.stopPropagation()}>
           <div className="bg-slate-900 rounded-3xl p-6 mx-4 max-w-sm w-full border border-slate-700 shadow-2xl">
             {watchingMovesAd ? (
               <div className="text-center py-8">

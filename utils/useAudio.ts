@@ -14,11 +14,11 @@ const SOUNDS = {
   placePiece: '/Assets/Sound/SFX/Ui & Item Sounds - HD Remake/Pop sound 3.wav',
   match: '/Assets/Sound/SFX/Ui & Item Sounds - HD Remake/Pop sound 8.wav',
 
-  // Combos (escalating sounds)
-  combo2: '/Assets/Sound/SFX/Ui & Item Sounds - HD Remake/Pop sound 12.wav',
-  combo3: '/Assets/Sound/SFX/Ui & Item Sounds - HD Remake/Collect star 2.wav',
-  combo4: '/Assets/Sound/SFX/Ui & Item Sounds - HD Remake/Collect star 4.wav',
-  combo5: '/Assets/Sound/SFX/Ui & Item Sounds - HD Remake/Powerup upgrade 8.wav',
+  // Combos (all use same pop sound)
+  combo2: '/Assets/Sound/SFX/Ui & Item Sounds - HD Remake/Pop sound 8.wav',
+  combo3: '/Assets/Sound/SFX/Ui & Item Sounds - HD Remake/Pop sound 8.wav',
+  combo4: '/Assets/Sound/SFX/Ui & Item Sounds - HD Remake/Pop sound 8.wav',
+  combo5: '/Assets/Sound/SFX/Ui & Item Sounds - HD Remake/Pop sound 8.wav',
 
   // Boosters
   createBooster: '/Assets/Sound/SFX/Ui & Item Sounds - HD Remake/Powerup upgrade 8.wav',
@@ -56,7 +56,7 @@ export function useAudio(): AudioManager {
   const audioCache = useRef<Map<string, HTMLAudioElement>>(new Map());
   const musicRef = useRef<HTMLAudioElement | null>(null);
   const sfxVolumeRef = useRef(0.5);
-  const musicVolumeRef = useRef(0.3);
+  const musicVolumeRef = useRef(0.15);
   const musicPlayingRef = useRef(false);
 
   // Preload sounds
