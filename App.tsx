@@ -101,12 +101,10 @@ const App: React.FC = () => {
   const [wildcardUses, setWildcardUses] = useState(3);
   const [wildcardMode, setWildcardMode] = useState(false);
   const [showAdPopup, setShowAdPopup] = useState(false);
-  const [pendingTrashIndex, setPendingTrashIndex] = useState<number | null>(null);
   const [watchingAd, setWatchingAd] = useState(false);
   const [showOutOfMovesPopup, setShowOutOfMovesPopup] = useState(false);
   const [watchingMovesAd, setWatchingMovesAd] = useState(false);
-  const [trashingPieceIndex, setTrashingPieceIndex] = useState<number | null>(null);
-  const [trashSelectMode, setTrashSelectMode] = useState(false);
+  const [trashingAllPieces, setTrashingAllPieces] = useState(false);
   const [shufflePhase, setShufflePhase] = useState<'darkening' | 'levitating' | 'scrambling' | 'landing' | null>(null);
   const [shuffleAnimations, setShuffleAnimations] = useState<Array<{
     tile: { color: Color; id: string };
@@ -1069,61 +1067,50 @@ const App: React.FC = () => {
     }, 400);
   };
 
-  // Execute trash with shake + explode animation
-  const executeTrash = (index: number) => {
-    const piece = gameState.hand[index];
-    if (!piece) return;
+  // Execute trash - refresh all 3 pieces with shake + explode animation
+  const executeTrash = () => {
+    // Start shake animation for all pieces
+    setTrashingAllPieces(true);
 
-    // Start shake animation
-    setTrashingPieceIndex(index);
-
-    // After 1 second, explode and remove
+    // After 800ms, explode all and replace with new pieces
     setTimeout(() => {
-      // Spawn explosion particles at piece location
-      const pieceEl = pieceRefs.current[index];
-      if (pieceEl) {
-        const rect = pieceEl.getBoundingClientRect();
-        const centerX = rect.left + rect.width / 2;
-        const centerY = rect.top + rect.height / 2;
+      // Spawn explosion particles for each piece
+      gameState.hand.forEach((piece, index) => {
+        if (piece) {
+          const pieceEl = pieceRefs.current[index];
+          if (pieceEl) {
+            const rect = pieceEl.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
 
-        // Spawn particles for each color in the piece
-        piece.colors.forEach((color, i) => {
-          const offsetX = (Math.random() - 0.5) * rect.width * 0.5;
-          const offsetY = (Math.random() - 0.5) * rect.height * 0.5;
-          spawnParticles(centerX + offsetX, centerY + offsetY, color, 8);
-        });
-      }
-
-      triggerShake();
-      setTrashingPieceIndex(null);
-
-      // Remove piece from hand
-      setGameState(prev => {
-        const newHand = [...prev.hand];
-        newHand[index] = null;
-
-        if (newHand.every(p => p === null)) {
-          return {
-            ...prev,
-            hand: generateValidHand(prev.grid, prev.level),
-            selectedPieceIndex: null
-          };
+            // Spawn particles for each color in the piece
+            piece.colors.forEach((color) => {
+              const offsetX = (Math.random() - 0.5) * rect.width * 0.5;
+              const offsetY = (Math.random() - 0.5) * rect.height * 0.5;
+              spawnParticles(centerX + offsetX, centerY + offsetY, color, 8);
+            });
+          }
         }
-
-        return { ...prev, hand: newHand, selectedPieceIndex: null };
       });
+
+      setTrashingAllPieces(false);
+
+      // Replace all pieces with new hand
+      setGameState(prev => ({
+        ...prev,
+        hand: generateValidHand(prev.grid, prev.level),
+        selectedPieceIndex: null
+      }));
     }, 800); // Shake for 800ms then explode
   };
 
-  // Trash a piece (when dropped on trash)
-  const trashPiece = (index: number) => {
+  // Activate trash powerup
+  const activateTrash = () => {
     if (trashUses > 0) {
       setTrashUses(prev => prev - 1);
-      executeTrash(index);
+      executeTrash();
     } else {
-      // Show ad popup - deselect piece first
-      setGameState(prev => ({ ...prev, selectedPieceIndex: null }));
-      setPendingTrashIndex(index);
+      // Show ad popup
       setShowAdPopup(true);
     }
   };
@@ -1133,18 +1120,14 @@ const App: React.FC = () => {
     setWatchingAd(true);
     // Simulate watching an ad (in real app, this would show actual ad)
     setTimeout(() => {
-      if (pendingTrashIndex !== null) {
-        executeTrash(pendingTrashIndex);
-      }
+      executeTrash();
       setShowAdPopup(false);
-      setPendingTrashIndex(null);
       setWatchingAd(false);
     }, 1500); // Simulate 1.5s ad
   };
 
   const handleCancelAd = () => {
     setShowAdPopup(false);
-    setPendingTrashIndex(null);
   };
 
   // Handle out of moves popup
@@ -1161,12 +1144,6 @@ const App: React.FC = () => {
   const handleGameOverFromMoves = () => {
     setShowOutOfMovesPopup(false);
     setGameState(prev => ({ ...prev, gameOver: true }));
-  };
-
-  // Handle trash select mode
-  const handleTrashSelect = (index: number) => {
-    setTrashSelectMode(false);
-    trashPiece(index);
   };
 
   // Trigger animation for incoming blocks flying from edges (reuses shuffle animation system)
@@ -1646,7 +1623,7 @@ const App: React.FC = () => {
   };
 
   const startDragging = (e: React.PointerEvent, index: number) => {
-    if (gameState.hand[index] === null || gameState.gameOver || celebrating || showLevelPopup || showAllClear || trashingPieceIndex !== null) return;
+    if (gameState.hand[index] === null || gameState.gameOver || celebrating || showLevelPopup || showAllClear || trashingAllPieces) return;
 
     // Calculate cell size based on actual board dimensions
     if (boardRef.current) {
@@ -2756,16 +2733,13 @@ const App: React.FC = () => {
               <div
                 key={piece?.id || `empty-${index}`}
                 ref={el => pieceRefs.current[index] = el}
-                onClick={() => trashSelectMode && piece && handleTrashSelect(index)}
                 className={`
                   flex items-center justify-center
                   relative transition-all duration-300
                   ${piece === null && fadingBoxIndex?.index !== index ? 'opacity-0 pointer-events-none' : ''}
                   ${fadingBoxIndex?.index === index && fadingBoxIndex.fading ? 'opacity-0' : ''}
                   ${fadingInPieceIndex === index ? 'opacity-0' : ''}
-                  ${trashingPieceIndex === index ? 'piece-trashing' : ''}
-                  ${trashSelectMode && piece ? 'cursor-pointer z-50 hover:scale-110 hover:brightness-125' : ''}
-                  ${trashSelectMode && !piece ? 'opacity-30' : ''}
+                  ${trashingAllPieces && piece ? 'piece-trashing' : ''}
                 `}
                 style={{
                   backgroundImage: `url(${UI_ASSETS.CONTAINER_NEXT_PIECE})`,
@@ -2773,13 +2747,14 @@ const App: React.FC = () => {
                   backgroundPosition: 'center',
                   backgroundRepeat: 'no-repeat',
                   width: '115px',
-                  height: '115px'
+                  height: '115px',
+                  animationDelay: trashingAllPieces ? `${index * 0.05}s` : undefined
                 }}
               >
                 {/* Piece (draggable area) */}
                 <div
-                  onPointerDown={(e) => !trashSelectMode && startDragging(e, index)}
-                  className={`flex items-center justify-center p-1 w-full h-full ${trashSelectMode ? '' : 'touch-none cursor-grab'}`}
+                  onPointerDown={(e) => startDragging(e, index)}
+                  className="flex items-center justify-center p-1 w-full h-full touch-none cursor-grab"
                   style={{ transform: 'scale(0.95)' }}
                 >
                   {piece && gameState.selectedPieceIndex !== index && returningPiece?.index !== index && (
@@ -2799,8 +2774,8 @@ const App: React.FC = () => {
       <div className="flex justify-center gap-4 sm:gap-6 pb-4 pt-2">
         {/* Delete Block Button */}
         <button
-          onClick={() => deleteBlockUses > 0 && !shufflePhase && !trashSelectMode && !deleteBlockMode && !wildcardMode && setDeleteBlockMode(true)}
-          disabled={deleteBlockUses <= 0 || !!shufflePhase || trashSelectMode || deleteBlockMode || wildcardMode}
+          onClick={() => deleteBlockUses > 0 && !shufflePhase && !trashingAllPieces && !deleteBlockMode && !wildcardMode && setDeleteBlockMode(true)}
+          disabled={deleteBlockUses <= 0 || !!shufflePhase || trashingAllPieces || deleteBlockMode || wildcardMode}
           className={`
             w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center relative
             transition-all duration-200 active:scale-95
@@ -2817,8 +2792,8 @@ const App: React.FC = () => {
 
         {/* Wildcard Button */}
         <button
-          onClick={() => wildcardUses > 0 && !shufflePhase && !trashSelectMode && !deleteBlockMode && !wildcardMode && setWildcardMode(true)}
-          disabled={wildcardUses <= 0 || !!shufflePhase || trashSelectMode || deleteBlockMode || wildcardMode}
+          onClick={() => wildcardUses > 0 && !shufflePhase && !trashingAllPieces && !deleteBlockMode && !wildcardMode && setWildcardMode(true)}
+          disabled={wildcardUses <= 0 || !!shufflePhase || trashingAllPieces || deleteBlockMode || wildcardMode}
           className={`
             w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center relative
             transition-all duration-200 active:scale-95
@@ -2835,8 +2810,8 @@ const App: React.FC = () => {
 
         {/* Shuffle Button */}
         <button
-          onClick={() => shuffleUses > 0 && !shufflePhase && !trashSelectMode && !deleteBlockMode && !wildcardMode && activateShuffle()}
-          disabled={shuffleUses <= 0 || !!shufflePhase || trashSelectMode || deleteBlockMode || wildcardMode}
+          onClick={() => shuffleUses > 0 && !shufflePhase && !trashingAllPieces && !deleteBlockMode && !wildcardMode && activateShuffle()}
+          disabled={shuffleUses <= 0 || !!shufflePhase || trashingAllPieces || deleteBlockMode || wildcardMode}
           className={`
             w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center relative
             transition-all duration-200 active:scale-95
@@ -2851,17 +2826,17 @@ const App: React.FC = () => {
           )}
         </button>
 
-        {/* Trash Button */}
+        {/* Refresh Button (was Trash) */}
         <button
-          onClick={() => trashUses > 0 && !shufflePhase && !trashSelectMode && !deleteBlockMode && !wildcardMode && setTrashSelectMode(true)}
-          disabled={trashUses <= 0 || !!shufflePhase || trashSelectMode || deleteBlockMode || wildcardMode}
+          onClick={() => trashUses > 0 && !shufflePhase && !trashingAllPieces && !deleteBlockMode && !wildcardMode && activateTrash()}
+          disabled={trashUses <= 0 || !!shufflePhase || trashingAllPieces || deleteBlockMode || wildcardMode}
           className={`
             w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center relative
             transition-all duration-200 active:scale-95
-            ${trashUses > 0 && !trashSelectMode && !deleteBlockMode && !wildcardMode ? 'bg-gradient-to-br from-red-500 to-orange-600 shadow-lg shadow-red-500/30' : 'bg-slate-700 opacity-50'}
+            ${trashUses > 0 && !trashingAllPieces && !deleteBlockMode && !wildcardMode ? 'bg-gradient-to-br from-red-500 to-orange-600 shadow-lg shadow-red-500/30' : 'bg-slate-700 opacity-50'}
           `}
         >
-          <i className="fa-solid fa-trash text-lg sm:text-xl md:text-2xl text-white"></i>
+          <i className="fa-solid fa-rotate text-lg sm:text-xl md:text-2xl text-white"></i>
           {trashUses > 0 && (
             <div className="absolute -top-1 -right-1 w-4 h-4 sm:w-5 sm:h-5 bg-yellow-400 rounded-full flex items-center justify-center text-[8px] sm:text-[10px] font-bold text-black">
               {trashUses}
@@ -2879,19 +2854,6 @@ const App: React.FC = () => {
           <div className="absolute top-8 left-0 right-0 text-center text-white pointer-events-none">
             <p className="text-xl font-bold mb-2">Select a block to destroy</p>
             <p className="text-sm text-slate-400">Tap a block or anywhere to cancel</p>
-          </div>
-        </div>
-      )}
-
-      {/* Trash Select Overlay */}
-      {trashSelectMode && (
-        <div
-          className="fixed inset-0 bg-black/70 z-40 flex items-center justify-center"
-          onClick={() => setTrashSelectMode(false)}
-        >
-          <div className="text-center text-white pointer-events-none">
-            <p className="text-xl font-bold mb-2">Select a piece to discard</p>
-            <p className="text-sm text-slate-400">Tap a piece box or anywhere to cancel</p>
           </div>
         </div>
       )}
