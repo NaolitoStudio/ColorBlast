@@ -1389,21 +1389,7 @@ const App: React.FC = () => {
           return { ...prev, grid: finalGrid, clearingTiles: [] };
         }
 
-        // Add random blocks to maintain initial grid coverage
-        const levelConfig = getLevelConfig(prev.level);
-        const totalCells = GRID_SIZE * GRID_SIZE;
-        const targetTiles = Math.floor(totalCells * levelConfig.gridFill);
-        const currentTiles = finalGrid.flat().filter(cell => cell !== null).length;
-        const blocksToAdd = Math.max(3, targetTiles - currentTiles);
-        const boosterPositions = prev.boosters.map(b => ({ x: b.x, y: b.y }));
-        const result = addRandomBlocks(finalGrid, blocksToAdd, prev.level, boosterPositions);
-        finalGrid = result.grid;
-
-        // Trigger flying animation for new blocks
-        if (result.addedBlocks.length > 0) {
-          setTimeout(() => triggerIncomingBlockAnimation(result.addedBlocks), 0);
-        }
-
+        // Booster counts as "match" - no new blocks added
         const lost = !prev.levelComplete && isGameOver(finalGrid, prev.hand);
         return {
           ...prev,
@@ -2396,21 +2382,6 @@ const App: React.FC = () => {
               return { ...prev, grid: finalGrid, clearingTiles: [] };
             }
 
-            // Add random blocks to maintain initial grid coverage
-            const levelConfig = getLevelConfig(prev.level);
-            const totalCells = GRID_SIZE * GRID_SIZE;
-            const targetTiles = Math.floor(totalCells * levelConfig.gridFill);
-            const currentTiles = finalGrid.flat().filter(cell => cell !== null).length;
-            const blocksToAdd = Math.max(3, targetTiles - currentTiles);
-            const boosterPositions = prev.boosters.map(b => ({ x: b.x, y: b.y }));
-            const result = addRandomBlocks(finalGrid, blocksToAdd, prev.level, boosterPositions);
-            finalGrid = result.grid;
-
-            // Trigger flying animation for new blocks (after state update)
-            if (result.addedBlocks.length > 0) {
-              setTimeout(() => triggerIncomingBlockAnimation(result.addedBlocks), 0);
-            }
-
             const lost = !prev.levelComplete && isGameOver(finalGrid, prev.hand);
             return {
               ...prev,
@@ -2422,16 +2393,32 @@ const App: React.FC = () => {
         }, 400);
 
       } else {
-        // No Match - Reset Combo
+        // No Match - Reset Combo AND add random blocks as penalty
         const newMoves = gameState.moves - 1;
-        const noValidMoves = isGameOver(newGrid, newHand);
         const outOfMoves = newMoves <= 0;
         // Base score for placing pieces is piece size * 10
         const placementScore = piece.shape.length * 10;
 
+        // Add random blocks when no match is made
+        const levelConfig = getLevelConfig(gameState.level);
+        const totalCells = GRID_SIZE * GRID_SIZE;
+        const targetTiles = Math.floor(totalCells * levelConfig.gridFill);
+        const currentTiles = newGrid.flat().filter(cell => cell !== null).length;
+        const blocksToAdd = Math.max(3, targetTiles - currentTiles);
+        const boosterPositions = gameState.boosters.map(b => ({ x: b.x, y: b.y }));
+        const result = addRandomBlocks(newGrid, blocksToAdd, gameState.level, boosterPositions);
+        const gridWithNewBlocks = result.grid;
+
+        // Trigger flying animation for new blocks
+        if (result.addedBlocks.length > 0) {
+          setTimeout(() => triggerIncomingBlockAnimation(result.addedBlocks), 0);
+        }
+
+        const noValidMoves = isGameOver(gridWithNewBlocks, newHand);
+
         setGameState(prev => ({
           ...prev,
-          grid: newGrid,
+          grid: gridWithNewBlocks,
           score: score + placementScore,
           moves: newMoves,
           hand: newHand,
