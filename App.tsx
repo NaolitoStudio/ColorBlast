@@ -2272,12 +2272,16 @@ const App: React.FC = () => {
       <div className="bg-slate-900 rounded-3xl p-4 mb-4 shadow-xl border border-slate-800 relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-purple-600 opacity-50"></div>
 
-        {/* Top row: Moves centered */}
-        <div className="flex justify-center items-center mb-3">
+        {/* Top row: Level left, Moves center */}
+        <div className="flex justify-between items-center mb-3">
+          <div className={`text-xl font-black px-3 py-1 rounded-xl ${gameState.level <= 1 ? 'bg-blue-500/20 text-blue-400' : gameState.level === 2 ? 'bg-green-500/20 text-green-400' : 'bg-purple-500/20 text-purple-400'}`}>
+            Level {gameState.level}
+          </div>
           <div className="flex flex-col items-center">
             <span className={`text-3xl font-black ${gameState.moves <= 5 ? 'text-red-400' : 'text-white'}`}>{gameState.moves}</span>
             <span className="text-[10px] text-slate-500 uppercase font-bold">Moves</span>
           </div>
+          <div className="w-16"></div> {/* Spacer for balance */}
         </div>
 
         {/* Objectives - only show first 2 */}
