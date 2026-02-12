@@ -1,6 +1,6 @@
 
 import { GRID_SIZE, SHAPES, getLevelConfig } from '../constants';
-import { Color, PieceData, Point, TileData, LevelObjective } from '../types';
+import { Color, PieceData, Point, TileData, LevelObjective, Booster } from '../types';
 
 export const createEmptyGrid = () =>
   Array(GRID_SIZE).fill(null).map(() => Array(GRID_SIZE).fill(null));
@@ -367,17 +367,23 @@ export const canPlacePiece = (
   grid: (TileData | null)[][],
   piece: PieceData,
   x: number,
-  y: number
+  y: number,
+  boosters: Booster[] = []
 ): boolean => {
   for (const point of piece.shape) {
     const targetX = x + point.x;
     const targetY = y + point.y;
-    
+
     if (
       targetX < 0 || targetX >= GRID_SIZE ||
       targetY < 0 || targetY >= GRID_SIZE ||
       grid[targetY][targetX] !== null
     ) {
+      return false;
+    }
+
+    // Check if there's a booster at this position
+    if (boosters.some(b => b.x === targetX && b.y === targetY)) {
       return false;
     }
   }
@@ -603,7 +609,7 @@ export const getBombExplosionPoints = (
   return points;
 };
 
-export const isGameOver = (grid: (TileData | null)[][], hand: (PieceData | null)[]): boolean => {
+export const isGameOver = (grid: (TileData | null)[][], hand: (PieceData | null)[], boosters: Booster[] = []): boolean => {
   const activePieces = hand.filter(p => p !== null);
   if (activePieces.length === 0) return false;
 
@@ -611,7 +617,7 @@ export const isGameOver = (grid: (TileData | null)[][], hand: (PieceData | null)
     if (!piece) continue;
     for (let y = 0; y < GRID_SIZE; y++) {
       for (let x = 0; x < GRID_SIZE; x++) {
-        if (canPlacePiece(grid, piece, x, y)) {
+        if (canPlacePiece(grid, piece, x, y, boosters)) {
           return false;
         }
       }

@@ -1427,7 +1427,7 @@ const App: React.FC = () => {
         }
 
         // Booster counts as "match" - no new blocks added
-        const lost = !prev.levelComplete && isGameOver(finalGrid, prev.hand);
+        const lost = !prev.levelComplete && isGameOver(finalGrid, prev.hand, prev.boosters);
         return {
           ...prev,
           grid: finalGrid,
@@ -1992,7 +1992,7 @@ const App: React.FC = () => {
           return { ...prev, grid: finalGrid, clearingTiles: [] };
         }
 
-        const lost = !prev.levelComplete && isGameOver(finalGrid, prev.hand);
+        const lost = !prev.levelComplete && isGameOver(finalGrid, prev.hand, prev.boosters);
         return { ...prev, grid: finalGrid, clearingTiles: [], gameOver: lost };
       });
     }, 400);
@@ -2077,7 +2077,7 @@ const App: React.FC = () => {
     const pieceIndex = gameState.selectedPieceIndex;
     const piece = gameState.hand[pieceIndex];
 
-    if (hoveredCell && piece && canPlacePiece(gameState.grid, piece, hoveredCell.x, hoveredCell.y)) {
+    if (hoveredCell && piece && canPlacePiece(gameState.grid, piece, hoveredCell.x, hoveredCell.y, gameState.boosters)) {
       placePieceAt(hoveredCell.x, hoveredCell.y);
       setDragPosition(null);
       setHoveredCell(null);
@@ -2120,7 +2120,7 @@ const App: React.FC = () => {
     const { selectedPieceIndex, hand, grid, score, combo, level, objectives, boosters } = gameState;
     const piece = hand[selectedPieceIndex!];
 
-    if (piece && canPlacePiece(grid, piece, x, y)) {
+    if (piece && canPlacePiece(grid, piece, x, y, gameState.boosters)) {
       // Fade out the box (but not if it's the last piece)
       const remainingPieces = hand.filter((p, i) => p !== null && i !== selectedPieceIndex).length;
       if (remainingPieces > 0) {
@@ -2428,7 +2428,7 @@ const App: React.FC = () => {
               return { ...prev, grid: finalGrid, clearingTiles: [] };
             }
 
-            const lost = !prev.levelComplete && isGameOver(finalGrid, prev.hand);
+            const lost = !prev.levelComplete && isGameOver(finalGrid, prev.hand, prev.boosters);
             return {
               ...prev,
               grid: finalGrid,
@@ -2460,7 +2460,7 @@ const App: React.FC = () => {
           setTimeout(() => triggerIncomingBlockAnimation(result.addedBlocks), 0);
         }
 
-        const noValidMoves = isGameOver(gridWithNewBlocks, newHand);
+        const noValidMoves = isGameOver(gridWithNewBlocks, newHand, gameState.boosters);
 
         setGameState(prev => ({
           ...prev,
@@ -2490,7 +2490,7 @@ const App: React.FC = () => {
     
     const ghostPointIndex = piece.shape.findIndex(p => hoveredCell.x + p.x === x && hoveredCell.y + p.y === y);
     if (ghostPointIndex !== -1) {
-      const isValid = canPlacePiece(gameState.grid, piece, hoveredCell.x, hoveredCell.y);
+      const isValid = canPlacePiece(gameState.grid, piece, hoveredCell.x, hoveredCell.y, gameState.boosters);
       return { color: piece.colors[ghostPointIndex], isValid };
     }
     return null;
