@@ -451,7 +451,7 @@ const App: React.FC = () => {
     index: number;
     progress: number;
   } | null>(null);
-  const [musicEnabled, setMusicEnabled] = useState(true);
+  const [musicEnabled, setMusicEnabled] = useState(false);
 
   const boardRef = useRef<HTMLDivElement>(null);
   const pieceRefs = useRef<(HTMLDivElement | null)[]>([null, null, null]);
@@ -512,29 +512,21 @@ const App: React.FC = () => {
     }
   }, [gameState.levelComplete]);
 
-  // Auto-start music on first user interaction (browsers block autoplay)
+  // Auto-start music on load (fallback to first interaction if blocked)
+  const musicStartedRef = useRef(false);
   useEffect(() => {
-    if (!musicEnabled) return;
+    if (!musicEnabled || musicStartedRef.current) return;
 
-    const startMusicOnInteraction = () => {
-      audio.startMusic();
-      document.removeEventListener('pointerdown', startMusicOnInteraction);
-      document.removeEventListener('keydown', startMusicOnInteraction);
-    };
-
-    document.addEventListener('pointerdown', startMusicOnInteraction);
-    document.addEventListener('keydown', startMusicOnInteraction);
-
-    return () => {
-      document.removeEventListener('pointerdown', startMusicOnInteraction);
-      document.removeEventListener('keydown', startMusicOnInteraction);
-    };
-  }, []);
+    // Try to start immediately
+    audio.startMusic();
+    musicStartedRef.current = true;
+  }, [musicEnabled, audio]);
 
   // Toggle background music
   const toggleMusic = () => {
     const isPlaying = audio.toggleMusic();
     setMusicEnabled(isPlaying);
+    musicStartedRef.current = isPlaying;
   };
 
   const triggerShake = () => {
