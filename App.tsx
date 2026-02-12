@@ -3336,7 +3336,7 @@ const App: React.FC = () => {
         style={{
           padding: `${responsive.boardInnerPadding}px`,
           marginBottom: `${responsive.layoutGap}px`,
-          zIndex: shufflePhase || superballAnimation ? 40 : undefined
+          zIndex: deleteBlockMode || wildcardMode ? 60 : (shufflePhase || superballAnimation ? 40 : undefined)
         }}
       >
         <div
@@ -3903,14 +3903,19 @@ const App: React.FC = () => {
 
       </div>
 
-      {/* Delete Block Overlay */}
-      {deleteBlockMode && (
+      {/* Target Overlay (Delete/Wildcard) */}
+      {(deleteBlockMode || wildcardMode) && (
         <div
           className="fixed inset-0 bg-black/70 z-40"
-          onClick={() => setDeleteBlockMode(false)}
+          onClick={() => {
+            setDeleteBlockMode(false);
+            setWildcardMode(false);
+          }}
         >
           <div className="absolute top-8 left-0 right-0 text-center text-white pointer-events-none">
-            <p className="text-xl font-bold mb-2">Select a block to destroy</p>
+            <p className="text-xl font-bold mb-2">
+              {deleteBlockMode ? 'Select a block to destroy' : 'Select a block to recolor'}
+            </p>
             <p className="text-sm text-slate-400">Tap a block or anywhere to cancel</p>
           </div>
         </div>

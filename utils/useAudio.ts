@@ -60,6 +60,13 @@ export function useAudio(): AudioManager {
   const sfxVolumeRef = useRef(0.5);
   const musicVolumeRef = useRef(0.15);
   const musicPlayingRef = useRef(false);
+  const audioUnlockedRef = useRef(false);
+  const pendingBlockedRef = useRef<Array<{
+    sound: SoundName;
+    volume?: number;
+    playbackRate?: number;
+    requestedAt: number;
+  }>>([]);
 
   // Preload sounds
   useEffect(() => {
@@ -79,6 +86,41 @@ export function useAudio(): AudioManager {
     return () => {
       musicRef.current?.pause();
       audioCache.current.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    const MAX_REPLAY_AGE_MS = 1200;
+
+    const replayPending = () => {
+      audioUnlockedRef.current = true;
+      if (pendingBlockedRef.current.length === 0) return;
+
+      const now = Date.now();
+      const pending = pendingBlockedRef.current;
+      pendingBlockedRef.current = [];
+
+      pending
+        .filter((entry) => (now - entry.requestedAt) <= MAX_REPLAY_AGE_MS)
+        .forEach((entry) => {
+          const path = SOUNDS[entry.sound];
+          if (!path || entry.sound === 'bgMusic') return;
+          const base = audioCache.current.get(path);
+          if (!base) return;
+
+          const targetVolume = entry.volume ?? sfxVolumeRef.current;
+          const clone = base.cloneNode() as HTMLAudioElement;
+          clone.volume = targetVolume;
+          if (entry.playbackRate) clone.playbackRate = entry.playbackRate;
+          clone.play().catch(() => {});
+        });
+    };
+
+    window.addEventListener('pointerdown', replayPending, { passive: true });
+    window.addEventListener('keydown', replayPending, { passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', replayPending);
+      window.removeEventListener('keydown', replayPending);
     };
   }, []);
 
@@ -142,24 +184,33 @@ export function useAudio(): AudioManager {
 
     const targetVolume = volume ?? sfxVolumeRef.current;
 
-    // Prefer the preloaded base element for immediate playback (no delayed fetch on clone).
-    if (base.paused || base.ended) {
-      try {
-        base.currentTime = 0;
-      } catch {
-        // Ignore currentTime errors on some browsers for not-yet-seekable media.
-      }
-      base.volume = targetVolume;
-      if (playbackRate) base.playbackRate = playbackRate;
-      base.play().catch(() => {});
-      return;
-    }
-
-    // Fallback for overlap: clone when the base is already busy.
+    // Use clones for consistent overlap behavior across all SFX.
     const clone = base.cloneNode() as HTMLAudioElement;
     clone.volume = targetVolume;
     if (playbackRate) clone.playbackRate = playbackRate;
-    clone.play().catch(() => {});
+    clone.play()
+      .then(() => {
+        audioUnlockedRef.current = true;
+      })
+      .catch((error: unknown) => {
+        const errName = typeof error === 'object' && error !== null && 'name' in error
+          ? String((error as { name?: string }).name)
+          : '';
+        const errMsg = typeof error === 'object' && error !== null && 'message' in error
+          ? String((error as { message?: string }).message)
+          : '';
+        const blockedByAutoplay = errName === 'NotAllowedError' || /notallowed/i.test(errMsg);
+
+        if (blockedByAutoplay && !audioUnlockedRef.current) {
+          pendingBlockedRef.current.push({
+            sound,
+            volume,
+            playbackRate,
+            requestedAt: Date.now()
+          });
+          return;
+        }
+      });
   }, [ensureSoundReady]);
 
   const playCombo = useCallback((comboLevel: number) => {
