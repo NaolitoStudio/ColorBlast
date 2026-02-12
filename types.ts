@@ -14,9 +14,23 @@ export type Point = {
   y: number;
 };
 
+export enum PowerupType {
+  ROCKET = 'ROCKET',
+  BOMB = 'BOMB',
+  LIGHTNING = 'LIGHTNING'
+}
+
 export interface TileData {
   color: Color;
   id: string;
+  powerup?: PowerupType;
+}
+
+export interface LevelConfig {
+  levelNumber: number;
+  availableColors: Color[];
+  pattern: (grid: (TileData | null)[][]) => void;
+  targetClears: number; // Number of blocks to clear for EACH available color
 }
 
 export interface PieceData {
