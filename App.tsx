@@ -4,6 +4,7 @@ import { GameState, PieceData, Point, Color, LevelObjective, Booster, BoosterTyp
 import { createRandomGrid, generatePiece, generateValidHand, canPlacePiece, findMatchGroups, findGroupCenter, getBombExplosionPoints, isGameOver, calculateScore, initializeObjectives, getAdjacentToMatches, addRandomBlocks, AddedBlock, getColorsForLevel } from './utils/gameLogic';
 import { GRID_SIZE, getLevelConfig } from './constants';
 import { ICONS, UI_ASSETS } from './assets';
+import { useAudio } from './utils/useAudio';
 
 // Since Color enum values are already icon paths, we don't need a separate mapping
 // Just check if the color value looks like an icon path (starts with '/icons/')
@@ -369,6 +370,9 @@ const SuperballForeground: React.FC<{
 };
 
 const App: React.FC = () => {
+  // Audio system
+  const audio = useAudio();
+
   // Unique ID counter for particles and other elements
   const particleIdCounter = useRef(0);
 
@@ -447,6 +451,7 @@ const App: React.FC = () => {
     index: number;
     progress: number;
   } | null>(null);
+  const [musicEnabled, setMusicEnabled] = useState(true);
 
   const boardRef = useRef<HTMLDivElement>(null);
   const pieceRefs = useRef<(HTMLDivElement | null)[]>([null, null, null]);
@@ -506,6 +511,31 @@ const App: React.FC = () => {
       setTimeout(() => startCelebration(), 500);
     }
   }, [gameState.levelComplete]);
+
+  // Auto-start music on first user interaction (browsers block autoplay)
+  useEffect(() => {
+    if (!musicEnabled) return;
+
+    const startMusicOnInteraction = () => {
+      audio.startMusic();
+      document.removeEventListener('pointerdown', startMusicOnInteraction);
+      document.removeEventListener('keydown', startMusicOnInteraction);
+    };
+
+    document.addEventListener('pointerdown', startMusicOnInteraction);
+    document.addEventListener('keydown', startMusicOnInteraction);
+
+    return () => {
+      document.removeEventListener('pointerdown', startMusicOnInteraction);
+      document.removeEventListener('keydown', startMusicOnInteraction);
+    };
+  }, []);
+
+  // Toggle background music
+  const toggleMusic = () => {
+    const isPlaying = audio.toggleMusic();
+    setMusicEnabled(isPlaying);
+  };
 
   const triggerShake = () => {
     setIsShaking(true);
@@ -639,6 +669,7 @@ const App: React.FC = () => {
   const handleAllClear = () => {
     setShowAllClear(true);
     triggerShake();
+    audio.play('allClear');
 
     // Spawn celebration particles across the board
     if (boardRef.current) {
@@ -730,6 +761,7 @@ const App: React.FC = () => {
   // Chain explosion celebration when level is complete
   const startCelebration = () => {
     setCelebrating(true);
+    audio.play('levelComplete');
 
     const boosters = [...gameState.boosters];
     const boosterDelay = 400; // ms between booster activations
@@ -1143,10 +1175,12 @@ const App: React.FC = () => {
     if (booster.type === 'color_ball') {
       const affected = getBoosterAffectedCells(booster);
       setSuperballAnimation({ booster, affectedCells: affected, phase: 'buildup' });
+      audio.play('superballCharge', undefined, 0.8);
 
       // After buildup animation (1.5s), explode
       setTimeout(() => {
         setSuperballAnimation(null);
+        audio.play('superball');
         executeBoosterExplosion(booster);
       }, 1500);
       return;
@@ -1170,6 +1204,7 @@ const App: React.FC = () => {
     }, 400);
 
     // Execute explosion immediately (simultaneous with indicator)
+    audio.play('activateBooster');
     executeBoosterExplosion(booster);
   };
 
@@ -1405,6 +1440,7 @@ const App: React.FC = () => {
   const executeTrash = () => {
     // Start shake animation for all pieces
     setTrashingAllPieces(true);
+    audio.play('trash');
 
     // After 800ms, explode all and replace with new pieces
     setTimeout(() => {
@@ -1477,12 +1513,14 @@ const App: React.FC = () => {
 
   const handleGameOverFromMoves = () => {
     setShowOutOfMovesPopup(false);
+    audio.play('gameOver');
     setGameState(prev => ({ ...prev, gameOver: true }));
   };
 
   // Trigger animation for incoming blocks flying from edges (reuses shuffle animation system)
   const triggerIncomingBlockAnimation = (addedBlocks: AddedBlock[]) => {
     if (!boardRef.current) return;
+    audio.play('blocksIncoming');
 
     const boardRect = boardRef.current.getBoundingClientRect();
     const gridElement = boardRef.current.querySelector('.board-grid');
@@ -1974,6 +2012,7 @@ const App: React.FC = () => {
     setDragPosition({ x: e.clientX, y: e.clientY });
     setDragVelocity({ x: 0, y: 0 });
     lastDragPos.current = { x: e.clientX, y: e.clientY, time: Date.now() };
+    audio.play('selectPiece');
 
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
   };
@@ -2042,6 +2081,7 @@ const App: React.FC = () => {
       lastDragPos.current = null;
     } else if (piece && dragPosition) {
       // Invalid drop - animate piece returning to box
+      audio.play('pieceReturn');
       const pieceBox = pieceRefs.current[pieceIndex];
       if (pieceBox) {
         const boxRect = pieceBox.getBoundingClientRect();
@@ -2107,6 +2147,7 @@ const App: React.FC = () => {
       // Calculate Score & Effects
       if (matchGroups.length > 0) {
         const newCombo = combo + 1;
+        audio.playCombo(newCombo);
 
         // Collect ALL cleared points from ALL match groups
         let allClearedPoints: Point[] = [];
@@ -2263,6 +2304,7 @@ const App: React.FC = () => {
                                booster.type === 'rocket_h' ? '🚀 ROCKET!' :
                                booster.type === 'rocket_v' ? '🚀 ROCKET!' : '💣 LINE!';
             spawnFloatingText(screenX, screenY - 20, boosterText);
+            audio.play('createBooster');
           });
         }
 
@@ -2769,7 +2811,17 @@ const App: React.FC = () => {
             <span className={`text-3xl font-black ${gameState.moves <= 5 ? 'text-red-400' : 'text-white'}`}>{gameState.moves}</span>
             <span className="text-[10px] text-slate-500 uppercase font-bold">Moves</span>
           </div>
-          <div className="w-16"></div> {/* Spacer for balance */}
+          {/* Music Toggle Button */}
+          <button
+            onClick={toggleMusic}
+            className={`
+              w-10 h-10 rounded-full flex items-center justify-center
+              transition-all duration-200 active:scale-95
+              ${musicEnabled ? 'bg-green-500/20 text-green-400' : 'bg-slate-700/50 text-slate-400'}
+            `}
+          >
+            <i className={`fa-solid ${musicEnabled ? 'fa-volume-high' : 'fa-volume-xmark'} text-lg`}></i>
+          </button>
         </div>
 
         {/* Objectives - only show first 2 */}
@@ -3361,6 +3413,7 @@ const App: React.FC = () => {
             </div>
           )}
         </button>
+
       </div>
 
       {/* Delete Block Overlay */}
