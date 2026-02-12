@@ -83,6 +83,39 @@ const collectGridBlocksForIntro = (
   return blocks;
 };
 
+const resolveSuperballTargetColor = (
+  grid: GameState['grid'],
+  preferredColor: Color
+): Color | null => {
+  let preferredCount = 0;
+  const counts = new Map<Color, number>();
+
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      const tile = grid[y][x];
+      if (!tile) continue;
+
+      const color = tile.color;
+      counts.set(color, (counts.get(color) ?? 0) + 1);
+      if (color === preferredColor) preferredCount++;
+    }
+  }
+
+  if (preferredCount > 0) return preferredColor;
+  if (counts.size === 0) return null;
+
+  let topColor: Color | null = null;
+  let topCount = -1;
+  counts.forEach((count, color) => {
+    if (count > topCount) {
+      topCount = count;
+      topColor = color;
+    }
+  });
+
+  return topColor;
+};
+
 interface Particle {
   id: number;
   x: number;
@@ -471,6 +504,28 @@ const SuperballForeground: React.FC<{
     </div>
   );
 };
+
+const PowerupDarkOverlay: React.FC<{
+  opacity?: number;
+  zIndex?: number;
+  pointerEvents?: 'none' | 'auto';
+  onClick?: () => void;
+}> = ({
+  opacity = 0.7,
+  zIndex = 30,
+  pointerEvents = 'none',
+  onClick
+}) => (
+  <div
+    className="fixed inset-0 powerup-dark-overlay"
+    style={{
+      backgroundColor: `rgba(0, 0, 0, ${opacity})`,
+      zIndex,
+      pointerEvents
+    }}
+    onClick={onClick}
+  />
+);
 
 const App: React.FC = () => {
   // Audio system
@@ -1040,11 +1095,14 @@ const App: React.FC = () => {
         }
       }
     } else if (booster.type === 'color_ball') {
-      // All tiles of the same color
-      for (let y = 0; y < GRID_SIZE; y++) {
-        for (let x = 0; x < GRID_SIZE; x++) {
-          if (grid[y][x]?.color === booster.color) {
-            affected.add(`${x},${y}`);
+      // Prefer booster color; if unavailable, fallback to the most abundant color on board.
+      const targetColor = resolveSuperballTargetColor(grid, booster.color);
+      if (targetColor) {
+        for (let y = 0; y < GRID_SIZE; y++) {
+          for (let x = 0; x < GRID_SIZE; x++) {
+            if (grid[y][x]?.color === targetColor) {
+              affected.add(`${x},${y}`);
+            }
           }
         }
       }
@@ -1539,10 +1597,13 @@ const App: React.FC = () => {
         }
       }
     } else if (booster.type === 'color_ball') {
-      for (let y = 0; y < GRID_SIZE; y++) {
-        for (let x = 0; x < GRID_SIZE; x++) {
-          if (grid[y][x]?.color === booster.color) {
-            points.push({ x, y });
+      const targetColor = resolveSuperballTargetColor(grid, booster.color);
+      if (targetColor) {
+        for (let y = 0; y < GRID_SIZE; y++) {
+          for (let x = 0; x < GRID_SIZE; x++) {
+            if (grid[y][x]?.color === targetColor) {
+              points.push({ x, y });
+            }
           }
         }
       }
@@ -1681,7 +1742,7 @@ const App: React.FC = () => {
     const matchingIds = allPointsToRemove.map(p => newGrid[p.y][p.x]?.id).filter(Boolean) as string[];
 
     // Show total score
-    if (boardRef.current) {
+    if (boardRef.current && allPointsToRemove.length > 0) {
       const avgX = allPointsToRemove.reduce((acc, p) => acc + p.x, 0) / allPointsToRemove.length;
       const avgY = allPointsToRemove.reduce((acc, p) => acc + p.y, 0) / allPointsToRemove.length;
       const board = boardRef.current;
@@ -3017,6 +3078,13 @@ const App: React.FC = () => {
           0% { width: 0%; }
           100% { width: 100%; }
         }
+        @keyframes powerupOverlayFadeIn {
+          0% { opacity: 0; }
+          100% { opacity: 1; }
+        }
+        .powerup-dark-overlay {
+          animation: powerupOverlayFadeIn 220ms ease-out both;
+        }
         @keyframes superballGlow {
           0%, 100% {
             filter:
@@ -3905,26 +3973,29 @@ const App: React.FC = () => {
 
       {/* Target Overlay (Delete/Wildcard) */}
       {(deleteBlockMode || wildcardMode) && (
-        <div
-          className="fixed inset-0 bg-black/70 z-40"
-          onClick={() => {
-            setDeleteBlockMode(false);
-            setWildcardMode(false);
-          }}
-        >
-          <div className="absolute top-8 left-0 right-0 text-center text-white pointer-events-none">
+        <>
+          <PowerupDarkOverlay
+            opacity={0.7}
+            zIndex={40}
+            pointerEvents="auto"
+            onClick={() => {
+              setDeleteBlockMode(false);
+              setWildcardMode(false);
+            }}
+          />
+          <div className="fixed top-8 left-0 right-0 text-center text-white pointer-events-none z-[65]">
             <p className="text-xl font-bold mb-2">
               {deleteBlockMode ? 'Select a block to destroy' : 'Select a block to recolor'}
             </p>
             <p className="text-sm text-slate-400">Tap a block or anywhere to cancel</p>
           </div>
-        </div>
+        </>
       )}
 
       {/* Superball Animation Overlay with Lightning Rays */}
       {superballAnimation?.phase === 'buildup' && (
         <>
-          <div className="fixed inset-0 bg-black/70 z-30 pointer-events-none" />
+          <PowerupDarkOverlay opacity={0.7} zIndex={30} pointerEvents="none" />
           <LightningRays
             booster={superballAnimation.booster}
             affectedCells={superballAnimation.affectedCells}
@@ -3940,7 +4011,7 @@ const App: React.FC = () => {
 
       {/* Shuffle Overlay */}
       {shufflePhase && (
-        <div className="fixed inset-0 bg-black/50 z-30 pointer-events-none" />
+        <PowerupDarkOverlay opacity={0.5} zIndex={30} pointerEvents="none" />
       )}
 
       {/* Ad Popup Modal */}
