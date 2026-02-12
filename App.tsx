@@ -716,15 +716,101 @@ const App: React.FC = () => {
       spawnParticles(cellCenterX, cellCenterY, bestColor, 6);
     }
 
-    // Update the tile color
-    setGameState(prev => {
-      const newGrid = prev.grid.map(row => [...row]);
-      newGrid[y][x] = { ...tile, color: bestColor };
-      return {
+    // Update the tile color and check for matches
+    const newGrid = gameState.grid.map(row => [...row]);
+    newGrid[y][x] = { ...tile, color: bestColor };
+
+    // Check for matches after color change
+    const matchGroups = findMatchGroups(newGrid);
+
+    if (matchGroups.length > 0) {
+      // Collect all cleared points
+      let allClearedPoints: Point[] = [];
+      matchGroups.forEach(group => {
+        group.forEach(p => {
+          if (!allClearedPoints.some(cp => cp.x === p.x && cp.y === p.y)) {
+            allClearedPoints.push(p);
+          }
+        });
+      });
+
+      // Count colors for objectives
+      const colorCounts: Record<string, number> = {};
+      allClearedPoints.forEach(p => {
+        const cell = newGrid[p.y][p.x];
+        if (cell) {
+          colorCounts[cell.color] = (colorCounts[cell.color] || 0) + 1;
+        }
+      });
+
+      // Update objectives
+      const newObjectives = gameState.objectives.map(obj => ({
+        ...obj,
+        current: Math.min(obj.target, obj.current + (colorCounts[obj.color] || 0))
+      }));
+
+      const isLevelComplete = newObjectives.slice(0, 2).every(obj => obj.current >= obj.target);
+      const matchingIds = allClearedPoints.map(p => newGrid[p.y][p.x]?.id).filter(Boolean) as string[];
+
+      // Spawn particles for cleared blocks
+      if (boardRef.current) {
+        const rect = boardRef.current.getBoundingClientRect();
+        const cellSize = rect.width / GRID_SIZE;
+        allClearedPoints.forEach(p => {
+          const cell = newGrid[p.y][p.x];
+          if (cell) {
+            const cellCenterX = rect.left + (p.x * cellSize) + (cellSize / 2);
+            const cellCenterY = rect.top + (p.y * cellSize) + (cellSize / 2);
+            spawnParticles(cellCenterX, cellCenterY, cell.color, 6);
+          }
+        });
+      }
+
+      triggerShake();
+
+      setGameState(prev => ({
+        ...prev,
+        grid: newGrid,
+        clearingTiles: matchingIds,
+        objectives: newObjectives,
+        levelComplete: isLevelComplete
+      }));
+
+      // Clear tiles after animation
+      setTimeout(() => {
+        setGameState(prev => {
+          let finalGrid = prev.grid.map(row =>
+            row.map(cell => cell && matchingIds.includes(cell.id) ? null : cell)
+          );
+
+          // Add random blocks to maintain coverage
+          const levelConfig = getLevelConfig(prev.level);
+          const totalCells = GRID_SIZE * GRID_SIZE;
+          const targetTiles = Math.floor(totalCells * levelConfig.gridFill);
+          const currentTiles = finalGrid.flat().filter(cell => cell !== null).length;
+          const blocksToAdd = Math.max(3, targetTiles - currentTiles);
+          const boosterPositions = prev.boosters.map(b => ({ x: b.x, y: b.y }));
+          const result = addRandomBlocks(finalGrid, blocksToAdd, prev.level, boosterPositions);
+          finalGrid = result.grid;
+
+          if (result.addedBlocks.length > 0) {
+            setTimeout(() => triggerIncomingBlockAnimation(result.addedBlocks), 0);
+          }
+
+          return {
+            ...prev,
+            grid: finalGrid,
+            clearingTiles: []
+          };
+        });
+      }, 400);
+    } else {
+      // No match, just update color
+      setGameState(prev => ({
         ...prev,
         grid: newGrid
-      };
-    });
+      }));
+    }
   };
 
   // Handle clicking on a booster to activate it
@@ -2186,30 +2272,11 @@ const App: React.FC = () => {
       <div className="bg-slate-900 rounded-3xl p-4 mb-4 shadow-xl border border-slate-800 relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-purple-600 opacity-50"></div>
 
-        {/* Top row: Level, Score, Combo, Restart */}
-        <div className="flex justify-between items-center mb-3">
-          <div className="flex items-center gap-3">
-            <div className={`text-xl font-black px-3 py-1 rounded-xl ${gameState.level <= 1 ? 'bg-blue-500/20 text-blue-400' : gameState.level === 2 ? 'bg-green-500/20 text-green-400' : 'bg-purple-500/20 text-purple-400'}`}>
-              Level {gameState.level}
-            </div>
-            <div className="flex flex-col">
-              <span className={`text-2xl font-black ${gameState.moves <= 5 ? 'text-red-400' : 'text-white'}`}>{gameState.moves}</span>
-              <span className="text-[8px] text-slate-500 uppercase font-bold">Moves</span>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="flex flex-col items-end">
-              <div className={`text-lg font-black transition-all ${gameState.combo > 1 ? 'text-yellow-400' : 'text-slate-700'}`}>
-                x{gameState.combo}
-              </div>
-              <span className="text-[8px] uppercase font-bold text-slate-600">Combo</span>
-            </div>
-            <button
-              onClick={handleRestart}
-              className="bg-slate-800 hover:bg-slate-700 w-10 h-10 rounded-xl flex items-center justify-center transition-all active:scale-90 border border-slate-700"
-            >
-              <i className="fa-solid fa-rotate-right text-lg text-blue-400"></i>
-            </button>
+        {/* Top row: Moves centered */}
+        <div className="flex justify-center items-center mb-3">
+          <div className="flex flex-col items-center">
+            <span className={`text-3xl font-black ${gameState.moves <= 5 ? 'text-red-400' : 'text-white'}`}>{gameState.moves}</span>
+            <span className="text-[10px] text-slate-500 uppercase font-bold">Moves</span>
           </div>
         </div>
 
