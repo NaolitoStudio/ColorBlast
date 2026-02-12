@@ -994,6 +994,7 @@ const App: React.FC = () => {
     }
 
     triggerShake();
+    audio.play('match');
 
     // Add to clearing tiles for animation
     setGameState(prev => ({
@@ -1062,6 +1063,9 @@ const App: React.FC = () => {
       bestColor = otherColors[Math.floor(Math.random() * otherColors.length)];
     }
 
+    // Play wildcard sound
+    audio.play('createBooster');
+
     // Spawn particles at the tile position
     if (boardRef.current) {
       const rect = boardRef.current.getBoundingClientRect();
@@ -1122,6 +1126,7 @@ const App: React.FC = () => {
       }
 
       triggerShake();
+      audio.play('match');
 
       setGameState(prev => ({
         ...prev,
