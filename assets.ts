@@ -16,3 +16,7 @@ export const UI_ASSETS = {
   CONTAINER_NEXT_PIECE: '/Assets/MainUI/Container_next_0001s_0001_Layer-13-copy-2.png',
   SUPERBALL: '/Assets/MainUI/Superball_0000_Layer-2.png'
 } as const;
+
+export const UI_ASSET_ASPECT_RATIOS = {
+  CONTAINER_NEXT_PIECE: 810 / 807,
+} as const;

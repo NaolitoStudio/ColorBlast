@@ -1,0 +1,21 @@
+{
+  "name": "forest",
+  "extends": "_base",
+  "version": "1.0.0",
+
+  "panels": {
+    "button_primary": {
+      "scale": 1.2
+    }
+  },
+
+  "custom": {
+    "panel_level_select": {
+      "divisionX": 0.5,
+      "divisionY": 0.4,
+      "rangeX": 0.15,
+      "rangeY": 0.1,
+      "scale": 1
+    }
+  }
+}

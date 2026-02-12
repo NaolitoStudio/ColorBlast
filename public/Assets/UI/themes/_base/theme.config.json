@@ -1,0 +1,115 @@
+{
+  "name": "_base",
+  "version": "1.0.0",
+
+  "defaults": {
+    "divisionX": 0.5,
+    "divisionY": 0.5,
+    "rangeX": 0.1,
+    "rangeY": 0.1,
+    "offsetX": 0,
+    "offsetY": 0,
+    "scale": 1
+  },
+
+  "panels": {
+    "_comment": "=== CONTENEDORES PRINCIPALES ===",
+
+    "panel_main": {
+      "_description": "Panel principal del juego (contiene el tablero)",
+      "rangeX": 0.15,
+      "rangeY": 0.15,
+      "scale": 1,
+      "aspectRatio": 1
+    },
+    "panel_popup": {
+      "_description": "Ventanas popup (Level Complete, Game Over, etc.)",
+      "rangeX": 0.12,
+      "rangeY": 0.12
+    },
+    "panel_score": {
+      "_description": "Cajas internas de puntuación/stats",
+      "rangeX": 0.2,
+      "rangeY": 0.15
+    },
+    "panel_header": {
+      "_description": "Cabecera con nivel, movimientos, etc.",
+      "divisionY": 0.6,
+      "rangeX": 0.25,
+      "rangeY": 0.1
+    },
+    "panel_tooltip": {
+      "_description": "Tooltips y mensajes pequeños",
+      "rangeX": 0.2,
+      "rangeY": 0.15
+    },
+
+    "_comment2": "=== CONTENEDORES DE JUEGO ===",
+
+    "container_board": {
+      "_description": "Contenedor del tablero de juego",
+      "rangeX": 0.08,
+      "rangeY": 0.08
+    },
+    "container_next_main": {
+      "_description": "Rack principal de piezas siguientes",
+      "rangeX": 0.15,
+      "rangeY": 0.15,
+      "scale": 1,
+      "aspectRatio": 2.4
+    },
+    "container_next_piece": {
+      "_description": "Slot individual para cada pieza en el rack",
+      "rangeX": 0.1,
+      "rangeY": 0.1
+    },
+    "slot_empty": {
+      "_description": "Celda vacía del tablero",
+      "rangeX": 0.15,
+      "rangeY": 0.15
+    },
+
+    "_comment3": "=== BOTONES ===",
+
+    "button_primary": {
+      "_description": "Botón principal (verde: Next Level, Watch Ad)",
+      "rangeX": 0.25,
+      "rangeY": 0.15
+    },
+    "button_secondary": {
+      "_description": "Botón secundario (azul: Play Again)",
+      "rangeX": 0.25,
+      "rangeY": 0.15
+    },
+    "button_cancel": {
+      "_description": "Botón cancelar/cerrar (gris oscuro)",
+      "rangeX": 0.25,
+      "rangeY": 0.15
+    },
+    "button_icon": {
+      "_description": "Botón circular con icono (powerups)",
+      "rangeX": 0.1,
+      "rangeY": 0.1
+    },
+
+    "_comment4": "=== BARRAS Y ELEMENTOS UI ===",
+
+    "progress_bar_bg": {
+      "_description": "Fondo de barra de progreso",
+      "rangeX": 0.3,
+      "rangeY": 0.1
+    },
+    "progress_bar_fill": {
+      "_description": "Relleno de barra de progreso",
+      "rangeX": 0.3,
+      "rangeY": 0.1
+    },
+    "objective_box": {
+      "_description": "Caja de objetivo individual",
+      "rangeX": 0.15,
+      "rangeY": 0.15
+    }
+  },
+
+  "custom": {}
+}

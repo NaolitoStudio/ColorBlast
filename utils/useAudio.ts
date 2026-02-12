@@ -43,6 +43,7 @@ type SoundName = keyof typeof SOUNDS;
 
 interface AudioManager {
   play: (sound: SoundName, volume?: number) => void;
+  preload: (sound: SoundName | SoundName[]) => Promise<void>;
   playCombo: (comboLevel: number) => void;
   startMusic: () => void;
   stopMusic: () => void;
@@ -54,6 +55,7 @@ interface AudioManager {
 
 export function useAudio(): AudioManager {
   const audioCache = useRef<Map<string, HTMLAudioElement>>(new Map());
+  const preloadPromises = useRef<Map<string, Promise<void>>>(new Map());
   const musicRef = useRef<HTMLAudioElement | null>(null);
   const sfxVolumeRef = useRef(0.5);
   const musicVolumeRef = useRef(0.15);
@@ -80,6 +82,42 @@ export function useAudio(): AudioManager {
     };
   }, []);
 
+  const ensureSoundReady = useCallback((sound: SoundName): Promise<void> => {
+    const path = SOUNDS[sound];
+    if (!path || sound === 'bgMusic') return Promise.resolve();
+
+    const existing = preloadPromises.current.get(path);
+    if (existing) return existing;
+
+    const promise = new Promise<void>((resolve) => {
+      let base = audioCache.current.get(path);
+      if (!base) {
+        base = new Audio(path);
+        base.preload = 'auto';
+        audioCache.current.set(path, base);
+      }
+
+      if (base.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        resolve();
+        return;
+      }
+
+      const finish = () => resolve();
+      base.addEventListener('canplaythrough', finish, { once: true });
+      base.addEventListener('loadeddata', finish, { once: true });
+      base.addEventListener('error', finish, { once: true });
+      base.load();
+    });
+
+    preloadPromises.current.set(path, promise);
+    return promise;
+  }, []);
+
+  const preload = useCallback(async (sound: SoundName | SoundName[]) => {
+    const sounds = Array.isArray(sound) ? sound : [sound];
+    await Promise.all(sounds.map((name) => ensureSoundReady(name)));
+  }, [ensureSoundReady]);
+
   const play = useCallback((sound: SoundName, volume?: number, playbackRate?: number) => {
     const path = SOUNDS[sound];
     if (!path || sound === 'bgMusic') return;
@@ -87,15 +125,42 @@ export function useAudio(): AudioManager {
     // DEBUG: Log sound being played
     console.log(`🔊 [AUDIO] Playing: "${sound}" -> ${path.split('/').pop()}`);
 
-    // Clone audio for overlapping sounds
-    const cached = audioCache.current.get(path);
-    if (cached) {
-      const audio = cached.cloneNode() as HTMLAudioElement;
-      audio.volume = volume ?? sfxVolumeRef.current;
-      if (playbackRate) audio.playbackRate = playbackRate;
-      audio.play().catch(() => {});
+    // Clone audio for overlapping sounds.
+    let base = audioCache.current.get(path);
+    if (!base) {
+      base = new Audio(path);
+      base.preload = 'auto';
+      audioCache.current.set(path, base);
     }
-  }, []);
+
+    // Prevent very-late delayed playback when the media is still loading.
+    // Callers that need guaranteed timing should preload first.
+    if (base.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+      void ensureSoundReady(sound);
+      return;
+    }
+
+    const targetVolume = volume ?? sfxVolumeRef.current;
+
+    // Prefer the preloaded base element for immediate playback (no delayed fetch on clone).
+    if (base.paused || base.ended) {
+      try {
+        base.currentTime = 0;
+      } catch {
+        // Ignore currentTime errors on some browsers for not-yet-seekable media.
+      }
+      base.volume = targetVolume;
+      if (playbackRate) base.playbackRate = playbackRate;
+      base.play().catch(() => {});
+      return;
+    }
+
+    // Fallback for overlap: clone when the base is already busy.
+    const clone = base.cloneNode() as HTMLAudioElement;
+    clone.volume = targetVolume;
+    if (playbackRate) clone.playbackRate = playbackRate;
+    clone.play().catch(() => {});
+  }, [ensureSoundReady]);
 
   const playCombo = useCallback((comboLevel: number) => {
     if (comboLevel <= 1) {
@@ -151,6 +216,7 @@ export function useAudio(): AudioManager {
 
   return {
     play,
+    preload,
     playCombo,
     startMusic,
     stopMusic,

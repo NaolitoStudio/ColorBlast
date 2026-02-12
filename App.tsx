@@ -1,10 +1,13 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect } from 'react';
+import { flushSync } from 'react-dom';
 import { GameState, PieceData, Point, Color, LevelObjective, Booster, BoosterType } from './types';
 import { createRandomGrid, generatePiece, generateValidHand, canPlacePiece, findMatchGroups, findGroupCenter, getBombExplosionPoints, isGameOver, calculateScore, initializeObjectives, getAdjacentToMatches, addRandomBlocks, AddedBlock, getColorsForLevel } from './utils/gameLogic';
 import { GRID_SIZE, getLevelConfig } from './constants';
-import { ICONS, UI_ASSETS } from './assets';
+import { ICONS, UI_ASSETS, UI_ASSET_ASPECT_RATIOS } from './assets';
 import { useAudio } from './utils/useAudio';
+import { useTheme, NineSlice, ResponsiveNineSlicePanel } from './src/theme';
+import { useResponsiveMetrics } from './src/layout/useResponsiveMetrics';
 
 // Since Color enum values are already icon paths, we don't need a separate mapping
 // Just check if the color value looks like an icon path (starts with '/icons/')
@@ -21,6 +24,63 @@ const getParticleColor = (iconPath: string): string => {
   if (iconPath.includes('yellow')) return '#eab308'; // Yellow
   if (iconPath.includes('orange')) return '#f97316'; // Orange
   return '#888888'; // Fallback
+};
+
+const IMAGE_PRELOAD_CACHE = new Map<string, Promise<void>>();
+
+const preloadImage = (src: string): Promise<void> => {
+  if (!src) return Promise.resolve();
+  const cached = IMAGE_PRELOAD_CACHE.get(src);
+  if (cached) return cached;
+
+  const promise = new Promise<void>((resolve, reject) => {
+    const image = new Image();
+    image.decoding = 'async';
+    image.onload = () => resolve();
+    image.onerror = () => reject(new Error(`Failed to preload image: ${src}`));
+    image.src = src;
+  });
+
+  IMAGE_PRELOAD_CACHE.set(src, promise);
+  return promise;
+};
+
+const preloadImages = async (sources: string[]): Promise<void> => {
+  const uniqueSources = Array.from(new Set(sources.filter(Boolean)));
+  if (uniqueSources.length === 0) return;
+  await Promise.allSettled(uniqueSources.map(preloadImage));
+};
+
+const removeTilesAtPoints = (grid: GameState['grid'], points: Point[]): GameState['grid'] => {
+  if (points.length === 0) return grid;
+  const maskedGrid = grid.map(row => [...row]);
+  for (const point of points) {
+    if (point.x < 0 || point.x >= GRID_SIZE || point.y < 0 || point.y >= GRID_SIZE) continue;
+    maskedGrid[point.y][point.x] = null;
+  }
+  return maskedGrid;
+};
+
+const collectGridBlocksForIntro = (
+  grid: GameState['grid'],
+  boosters: Booster[] = []
+): AddedBlock[] => {
+  const boosterSet = new Set(boosters.map(booster => `${booster.x},${booster.y}`));
+  const blocks: AddedBlock[] = [];
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      if (boosterSet.has(`${x},${y}`)) continue;
+      const cell = grid[y][x];
+      if (!cell) continue;
+      blocks.push({
+        id: cell.id,
+        x,
+        y,
+        color: cell.color
+      });
+    }
+  }
+  return blocks;
 };
 
 interface Particle {
@@ -52,6 +112,38 @@ type SuperballAnimationState = {
   phase: 'buildup' | 'explode';
 };
 
+type BoardGridMetrics = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  cellSize: number;
+  gapX: number;
+  gapY: number;
+};
+
+const getBoardGridMetrics = (board: HTMLDivElement): BoardGridMetrics | null => {
+  const gridEl = board.querySelector<HTMLDivElement>('.board-grid');
+  if (!gridEl) return null;
+
+  const rect = gridEl.getBoundingClientRect();
+  const styles = window.getComputedStyle(gridEl);
+  const gapX = Number.parseFloat(styles.columnGap || styles.gap || '0') || 0;
+  const gapY = Number.parseFloat(styles.rowGap || styles.gap || '0') || 0;
+  const cellSize = (rect.width - (gapX * (GRID_SIZE - 1))) / GRID_SIZE;
+  if (!Number.isFinite(cellSize) || cellSize <= 0) return null;
+
+  return {
+    left: rect.left,
+    top: rect.top,
+    width: rect.width,
+    height: rect.height,
+    cellSize,
+    gapX,
+    gapY
+  };
+};
+
 const getBoardCellMetrics = (board: HTMLDivElement, x: number, y: number) => {
   const cellEl = board.querySelector<HTMLDivElement>(`[data-cell="${x},${y}"]`);
   if (cellEl) {
@@ -61,6 +153,16 @@ const getBoardCellMetrics = (board: HTMLDivElement, x: number, y: number) => {
       centerY: r.top + (r.height / 2),
       width: r.width,
       height: r.height
+    };
+  }
+
+  const grid = getBoardGridMetrics(board);
+  if (grid) {
+    return {
+      centerX: grid.left + (x * (grid.cellSize + grid.gapX)) + (grid.cellSize / 2),
+      centerY: grid.top + (y * (grid.cellSize + grid.gapY)) + (grid.cellSize / 2),
+      width: grid.cellSize,
+      height: grid.cellSize
     };
   }
 
@@ -90,11 +192,10 @@ const LightningRays: React.FC<{
     return () => clearInterval(interval);
   }, [phase]);
 
-  if (phase !== 'buildup' || !boardRef.current) return null;
+  const board = boardRef.current;
+  if (phase !== 'buildup' || !board) return null;
 
-  const rect = boardRef.current.getBoundingClientRect();
-  const cellSize = rect.width / GRID_SIZE;
-  const boosterMetrics = getBoardCellMetrics(boardRef.current, booster.x, booster.y);
+  const boosterMetrics = getBoardCellMetrics(board, booster.x, booster.y);
   const boosterX = boosterMetrics.centerX;
   const boosterY = boosterMetrics.centerY;
 
@@ -248,8 +349,10 @@ const LightningRays: React.FC<{
         const [cx, cy] = cellKey.split(',').map(Number);
         if (cx === booster.x && cy === booster.y) return null;
 
-        const cellCenterX = rect.left + (cx * cellSize) + (cellSize / 2);
-        const cellCenterY = rect.top + (cy * cellSize) + (cellSize / 2);
+        const targetMetrics = getBoardCellMetrics(board, cx, cy);
+        const cellCenterX = targetMetrics.centerX;
+        const cellCenterY = targetMetrics.centerY;
+        const targetCellSize = targetMetrics.width;
         const sourceX = boosterX + ((Math.random() - 0.5) * 3.2);
         const sourceY = boosterY + ((Math.random() - 0.5) * 3.2);
 
@@ -277,8 +380,8 @@ const LightningRays: React.FC<{
               .slice(0, boltCount);
 
         const landingPoints = selectedSlots.map(slot => ({
-          x: cellCenterX + (slot.x * cellSize) + ((Math.random() - 0.5) * cellSize * 0.06),
-          y: cellCenterY + (slot.y * cellSize) + ((Math.random() - 0.5) * cellSize * 0.06)
+          x: cellCenterX + (slot.x * targetCellSize) + ((Math.random() - 0.5) * targetCellSize * 0.06),
+          y: cellCenterY + (slot.y * targetCellSize) + ((Math.random() - 0.5) * targetCellSize * 0.06)
         }));
 
         return (
@@ -372,23 +475,29 @@ const SuperballForeground: React.FC<{
 const App: React.FC = () => {
   // Audio system
   const audio = useAudio();
+  const playAudio = audio.play;
+  const preloadAudio = audio.preload;
+
+  // Theme system
+  const theme = useTheme();
 
   // Unique ID counter for particles and other elements
   const particleIdCounter = useRef(0);
 
-  // Track tile IDs that are currently flying in (using ref for synchronous access)
-  const flyingTileIds = useRef<Set<string>>(new Set());
-
   const [gameState, setGameState] = useState<GameState>(() => {
     const initialLevel = 1;
     const levelConfig = getLevelConfig(initialLevel);
-    const initialGrid = createRandomGrid(levelConfig.gridFill, initialLevel);
+    const initialBoosters: Booster[] = [
+      { id: 'test-superball-1', type: 'color_ball', x: 3, y: 3, color: Color.BLUE }
+    ];
+    const initialGrid = removeTilesAtPoints(
+      createRandomGrid(levelConfig.gridFill, initialLevel),
+      initialBoosters.map(booster => ({ x: booster.x, y: booster.y }))
+    );
     const initialHand = generateValidHand(initialGrid, initialLevel);
     return {
       grid: initialGrid,
-      boosters: [
-        { id: 'test-superball-1', type: 'color_ball', x: 3, y: 3, color: Color.BLUE }
-      ],
+      boosters: initialBoosters,
       score: 0,
       highScore: Number(localStorage.getItem('highScore')) || 0,
       moves: 20,
@@ -439,6 +548,8 @@ const App: React.FC = () => {
     toPx: { x: number; y: number };
     progress: number;
     cellSize: number;
+    isBooster?: boolean;
+    boosterType?: BoosterType;
   }>>([]);
   const [fadingBoxIndex, setFadingBoxIndex] = useState<{ index: number; fading: boolean } | null>(null);
   const [fadingInPieceIndex, setFadingInPieceIndex] = useState<number | null>(null);
@@ -452,9 +563,203 @@ const App: React.FC = () => {
     progress: number;
   } | null>(null);
   const [musicEnabled, setMusicEnabled] = useState(false);
+  const [isCriticalAssetsReady, setIsCriticalAssetsReady] = useState(false);
+  const [showLoadingScreen, setShowLoadingScreen] = useState(true);
+  const [isInteractionLocked, setIsInteractionLocked] = useState(true);
+  const [isIntroArrivalActive, setIsIntroArrivalActive] = useState(false);
+  const [introRequest, setIntroRequest] = useState<{
+    id: number;
+    blocks: AddedBlock[];
+    boosters: Booster[];
+    minLoadingMs: number;
+  } | null>(null);
+  const introRequestIdRef = useRef(0);
+  const bootIntroQueuedRef = useRef(false);
+  const pendingIncomingBlocksRef = useRef<AddedBlock[] | null>(null);
 
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const headerCardRef = useRef<HTMLDivElement>(null);
   const boardRef = useRef<HTMLDivElement>(null);
   const pieceRefs = useRef<(HTMLDivElement | null)[]>([null, null, null]);
+  const boardPanelConfig = theme.config('panel_main');
+  const rackPanelConfig = theme.config('container_next_main');
+  const boardAspect = boardPanelConfig.aspectRatio ?? 1;
+  const rackAspect = rackPanelConfig.aspectRatio ?? (3 / 2);
+  const backgroundImageSrc = theme.background('bg_game');
+  const boardPanelSrc = theme.panel('panel_main');
+  const rackPanelSrc = theme.panel('panel_main');
+  const popupPanelSrc = theme.panel('panel_popup');
+  const primaryButtonPanelSrc = theme.panel('button_primary');
+  const secondaryButtonPanelSrc = theme.panel('button_secondary');
+  const cancelButtonPanelSrc = theme.panel('button_cancel');
+  const loadingLevelTemplateSrc = theme.template('loading_level');
+  const loadingSplashTemplateSrc = theme.template('splash_loading');
+
+  const responsive = useResponsiveMetrics({
+    layoutRef,
+    headerRef: headerCardRef,
+    powerupCount: 4,
+    minTouchTarget: 44,
+    boardAspect,
+    rackAspect,
+    boardPanelScale: boardPanelConfig.scale ?? 1,
+    boardPanelScaleMode: boardPanelConfig.scaleMode ?? 'density',
+    boardPanelDprReference: boardPanelConfig.dprReference ?? 2,
+    boardPanelDprMinFactor: boardPanelConfig.dprMinFactor ?? 0.8,
+    boardPanelDprMaxFactor: boardPanelConfig.dprMaxFactor ?? 1.25,
+    rackSlotAspect: UI_ASSET_ASPECT_RATIOS.CONTAINER_NEXT_PIECE
+  });
+
+  const queueLevelIntro = useCallback((
+    grid: GameState['grid'],
+    boosters: Booster[] = [],
+    minLoadingMs = 650
+  ) => {
+    const requestId = ++introRequestIdRef.current;
+    setShowLoadingScreen(true);
+    setIsInteractionLocked(true);
+    setIntroRequest({
+      id: requestId,
+      blocks: collectGridBlocksForIntro(grid, boosters),
+      boosters: boosters.map(booster => ({ ...booster })),
+      minLoadingMs
+    });
+  }, []);
+
+  useEffect(() => {
+    bootIntroQueuedRef.current = false;
+    introRequestIdRef.current = 0;
+    pendingIncomingBlocksRef.current = null;
+    setIsInteractionLocked(true);
+    setShowLoadingScreen(true);
+    setIsIntroArrivalActive(false);
+    setIntroRequest(null);
+  }, [theme.themeName]);
+
+  const getCellMetrics = useCallback((x: number, y: number) => {
+    if (!boardRef.current) return null;
+    return getBoardCellMetrics(boardRef.current, x, y);
+  }, []);
+
+  const getBoardPlacementMetrics = useCallback(() => {
+    if (!boardRef.current) return null;
+    const grid = getBoardGridMetrics(boardRef.current);
+    if (grid) {
+      return {
+        left: grid.left,
+        top: grid.top,
+        cellSize: grid.cellSize,
+        gapX: grid.gapX,
+        gapY: grid.gapY
+      };
+    }
+
+    const rect = boardRef.current.getBoundingClientRect();
+    const cellSize = rect.width / GRID_SIZE;
+    return {
+      left: rect.left,
+      top: rect.top,
+      cellSize,
+      gapX: 0,
+      gapY: 0
+    };
+  }, []);
+
+  const activeIncomingIds = useMemo(() => {
+    const tileIds = new Set<string>();
+    const boosterIds = new Set<string>();
+    for (const anim of shuffleAnimations) {
+      if (anim.isBooster) {
+        boosterIds.add(anim.tile.id);
+      } else {
+        tileIds.add(anim.tile.id);
+      }
+    }
+    return { tileIds, boosterIds };
+  }, [shuffleAnimations]);
+
+
+  // Preload all critical assets before exposing gameplay.
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!theme.isReady) {
+      setIsCriticalAssetsReady(false);
+      setShowLoadingScreen(true);
+      return;
+    }
+
+    setIsCriticalAssetsReady(false);
+    setShowLoadingScreen(true);
+
+    const bootstrapAssets = async () => {
+      await preloadAudio('blocksIncoming');
+      await preloadImages([
+        backgroundImageSrc,
+        loadingLevelTemplateSrc,
+        loadingSplashTemplateSrc,
+        boardPanelSrc,
+        rackPanelSrc,
+        popupPanelSrc,
+        primaryButtonPanelSrc,
+        secondaryButtonPanelSrc,
+        cancelButtonPanelSrc,
+        UI_ASSETS.SLOT,
+        UI_ASSETS.CONTAINER_NEXT_PIECE,
+        UI_ASSETS.SUPERBALL,
+        ICONS.BLUE,
+        ICONS.GREEN,
+        ICONS.PURPLE,
+        ICONS.YELLOW,
+        ICONS.ORANGE
+      ]);
+
+      if (cancelled) return;
+      setIsCriticalAssetsReady(true);
+    };
+
+    bootstrapAssets();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    cancelButtonPanelSrc,
+    backgroundImageSrc,
+    boardPanelSrc,
+    primaryButtonPanelSrc,
+    loadingLevelTemplateSrc,
+    loadingSplashTemplateSrc,
+    popupPanelSrc,
+    rackPanelSrc,
+    secondaryButtonPanelSrc,
+    preloadAudio,
+    theme.isReady,
+    theme.themeName
+  ]);
+
+  // Initial level entry sequence after theme + assets are fully loaded.
+  useEffect(() => {
+    if (!theme.isReady || !isCriticalAssetsReady || bootIntroQueuedRef.current) return;
+    bootIntroQueuedRef.current = true;
+    queueLevelIntro(gameState.grid, gameState.boosters, 700);
+  }, [gameState.boosters, gameState.grid, isCriticalAssetsReady, queueLevelIntro, theme.isReady]);
+
+  // Hard lock gameplay interactions while loading/intro is active.
+  useEffect(() => {
+    if (!isInteractionLocked) return;
+    setDeleteBlockMode(false);
+    setWildcardMode(false);
+    setDragPosition(null);
+    setHoveredCell(null);
+    setDragVelocity({ x: 0, y: 0 });
+    lastDragPos.current = null;
+    setGameState(prev => (
+      prev.selectedPieceIndex === null
+        ? prev
+        : { ...prev, selectedPieceIndex: null }
+    ));
+  }, [isInteractionLocked]);
 
   // Animation Loop
   useEffect(() => {
@@ -800,9 +1105,6 @@ const App: React.FC = () => {
 
     // Spawn particles and clear affected cells
     if (boardRef.current) {
-      const rect = boardRef.current.getBoundingClientRect();
-      const cellSize = rect.width / GRID_SIZE;
-
       setGameState(prev => {
         const newGrid = prev.grid.map(row => [...row]);
         let scoreBonus = 0;
@@ -810,9 +1112,10 @@ const App: React.FC = () => {
         affectedPoints.forEach(p => {
           const cell = newGrid[p.y]?.[p.x];
           if (cell) {
-            const cellCenterX = rect.left + (p.x * cellSize) + (cellSize / 2);
-            const cellCenterY = rect.top + (p.y * cellSize) + (cellSize / 2);
-            spawnParticles(cellCenterX, cellCenterY, cell.color, 6);
+            const metrics = getCellMetrics(p.x, p.y);
+            if (metrics) {
+              spawnParticles(metrics.centerX, metrics.centerY, cell.color, 6);
+            }
             newGrid[p.y][p.x] = null;
             scoreBonus += 10;
           }
@@ -870,11 +1173,10 @@ const App: React.FC = () => {
           // Play sound every 3-4 blocks for popcorn effect
           if (index % 3 === 0 || index % 7 === 0) audio.play('match');
           if (boardRef.current) {
-            const rect = boardRef.current.getBoundingClientRect();
-            const cellSize = rect.width / GRID_SIZE;
-            const cellCenterX = rect.left + (block.x * cellSize) + (cellSize / 2);
-            const cellCenterY = rect.top + (block.y * cellSize) + (cellSize / 2);
-            spawnParticles(cellCenterX, cellCenterY, block.color, 8);
+            const metrics = getCellMetrics(block.x, block.y);
+            if (metrics) {
+              spawnParticles(metrics.centerX, metrics.centerY, block.color, 8);
+            }
           }
 
           setGameState(p => {
@@ -927,6 +1229,7 @@ const App: React.FC = () => {
     setShuffleUses(3);
     setDeleteBlockUses(3);
     setWildcardUses(3);
+    queueLevelIntro(initialGrid, [], 650);
   };
 
   const handleNextLevel = () => {
@@ -957,6 +1260,7 @@ const App: React.FC = () => {
     setShuffleUses(3);
     setDeleteBlockUses(3);
     setWildcardUses(3);
+    queueLevelIntro(newGrid, [], 650);
   };
 
   // Handle deleting a single block from the board
@@ -969,20 +1273,19 @@ const App: React.FC = () => {
 
     // Spawn particles at the tile position
     if (boardRef.current) {
-      const rect = boardRef.current.getBoundingClientRect();
-      const cellSize = rect.width / GRID_SIZE;
-      const cellCenterX = rect.left + (x * cellSize) + (cellSize / 2);
-      const cellCenterY = rect.top + (y * cellSize) + (cellSize / 2);
-      spawnParticles(cellCenterX, cellCenterY, tile.color, 8);
+      const metrics = getCellMetrics(x, y);
+      if (metrics) {
+        spawnParticles(metrics.centerX, metrics.centerY, tile.color, 8);
 
-      // Show floating text
-      setFloatingTexts(prev => [...prev, {
-        id: `delete-${Date.now()}`,
-        text: '+15',
-        x: cellCenterX,
-        y: cellCenterY,
-        color: tile.color
-      }]);
+        // Show floating text
+        setFloatingTexts(prev => [...prev, {
+          id: `delete-${Date.now()}`,
+          text: '+15',
+          x: metrics.centerX,
+          y: metrics.centerY,
+          color: tile.color
+        }]);
+      }
     }
 
     triggerShake();
@@ -1060,11 +1363,10 @@ const App: React.FC = () => {
 
     // Spawn particles at the tile position
     if (boardRef.current) {
-      const rect = boardRef.current.getBoundingClientRect();
-      const cellSize = rect.width / GRID_SIZE;
-      const cellCenterX = rect.left + (x * cellSize) + (cellSize / 2);
-      const cellCenterY = rect.top + (y * cellSize) + (cellSize / 2);
-      spawnParticles(cellCenterX, cellCenterY, bestColor, 6);
+      const metrics = getCellMetrics(x, y);
+      if (metrics) {
+        spawnParticles(metrics.centerX, metrics.centerY, bestColor, 6);
+      }
     }
 
     // Update the tile color and check for matches
@@ -1105,14 +1407,13 @@ const App: React.FC = () => {
 
       // Spawn particles for cleared blocks
       if (boardRef.current) {
-        const rect = boardRef.current.getBoundingClientRect();
-        const cellSize = rect.width / GRID_SIZE;
         allClearedPoints.forEach(p => {
           const cell = newGrid[p.y][p.x];
           if (cell) {
-            const cellCenterX = rect.left + (p.x * cellSize) + (cellSize / 2);
-            const cellCenterY = rect.top + (p.y * cellSize) + (cellSize / 2);
-            spawnParticles(cellCenterX, cellCenterY, cell.color, 6);
+            const metrics = getCellMetrics(p.x, p.y);
+            if (metrics) {
+              spawnParticles(metrics.centerX, metrics.centerY, cell.color, 6);
+            }
           }
         });
       }
@@ -1146,7 +1447,7 @@ const App: React.FC = () => {
           finalGrid = result.grid;
 
           if (result.addedBlocks.length > 0) {
-            setTimeout(() => triggerIncomingBlockAnimation(result.addedBlocks), 0);
+            pendingIncomingBlocksRef.current = result.addedBlocks;
           }
 
           return {
@@ -1167,6 +1468,7 @@ const App: React.FC = () => {
 
   // Handle clicking on a booster to activate it
   const activateBooster = (booster: Booster) => {
+    if (isInteractionLocked) return;
     if (celebrating || showLevelPopup || showAllClear || gameState.gameOver) return;
     if (affectedCells.size > 0 || superballAnimation) return; // Already activating
 
@@ -1285,10 +1587,10 @@ const App: React.FC = () => {
 
       // Spawn visuals for this booster
       if (boardRef.current) {
-        const rect = boardRef.current.getBoundingClientRect();
-        const cellSize = rect.width / GRID_SIZE;
-        const boosterCenterX = rect.left + (booster.x * cellSize) + (cellSize / 2);
-        const boosterCenterY = rect.top + (booster.y * cellSize) + (cellSize / 2);
+        const boosterMetrics = getCellMetrics(booster.x, booster.y);
+        if (!boosterMetrics) continue;
+        const boosterCenterX = boosterMetrics.centerX;
+        const boosterCenterY = boosterMetrics.centerY;
 
         // Particles for the booster itself (5 colors burst for superball)
         if (booster.type === 'color_ball') {
@@ -1306,9 +1608,10 @@ const App: React.FC = () => {
         pointsFromThisBooster.forEach(p => {
           const tile = newGrid[p.y]?.[p.x];
           if (tile) {
-            const cellCenterX = rect.left + (p.x * cellSize) + (cellSize / 2);
-            const cellCenterY = rect.top + (p.y * cellSize) + (cellSize / 2);
-            spawnParticles(cellCenterX, cellCenterY, tile.color, 8);
+            const metrics = getCellMetrics(p.x, p.y);
+            if (metrics) {
+              spawnParticles(metrics.centerX, metrics.centerY, tile.color, 8);
+            }
           }
         });
 
@@ -1336,11 +1639,10 @@ const App: React.FC = () => {
             newGrid[p.y][p.x] = { ...tile, locked: false };
             // Spawn unlock visual
             if (boardRef.current) {
-              const rect = boardRef.current.getBoundingClientRect();
-              const cellSize = rect.width / GRID_SIZE;
-              const cellCenterX = rect.left + (p.x * cellSize) + (cellSize / 2);
-              const cellCenterY = rect.top + (p.y * cellSize) + (cellSize / 2);
-              spawnFloatingText(cellCenterX, cellCenterY, '🔓');
+              const metrics = getCellMetrics(p.x, p.y);
+              if (metrics) {
+                spawnFloatingText(metrics.centerX, metrics.centerY, '🔓');
+              }
             }
           } else {
             // Remove unlocked tile
@@ -1380,11 +1682,11 @@ const App: React.FC = () => {
 
     // Show total score
     if (boardRef.current) {
-      const rect = boardRef.current.getBoundingClientRect();
-      const cellSize = rect.width / GRID_SIZE;
       const avgX = allPointsToRemove.reduce((acc, p) => acc + p.x, 0) / allPointsToRemove.length;
       const avgY = allPointsToRemove.reduce((acc, p) => acc + p.y, 0) / allPointsToRemove.length;
-      spawnFloatingText(rect.left + avgX * cellSize, rect.top + avgY * cellSize, `+${totalScore}`);
+      const board = boardRef.current;
+      const centerMetrics = getBoardCellMetrics(board, avgX, avgY);
+      spawnFloatingText(centerMetrics.centerX, centerMetrics.centerY, `+${totalScore}`);
     }
 
     triggerShake();
@@ -1475,6 +1777,7 @@ const App: React.FC = () => {
 
   // Activate trash powerup
   const activateTrash = () => {
+    if (isInteractionLocked) return;
     if (trashUses > 0) {
       setTrashUses(prev => prev - 1);
       executeTrash();
@@ -1517,13 +1820,23 @@ const App: React.FC = () => {
   };
 
   // Trigger animation for incoming blocks flying from edges (reuses shuffle animation system)
-  const triggerIncomingBlockAnimation = (addedBlocks: AddedBlock[]) => {
-    if (!boardRef.current) return;
-    audio.play('blocksIncoming');
+  const triggerIncomingBlockAnimation = useCallback((
+    addedBlocks: AddedBlock[],
+    options: {
+      durationMs?: number;
+      playSound?: boolean;
+      incomingBoosters?: Booster[];
+      onComplete?: () => void;
+    } = {}
+  ): boolean => {
+    if (!boardRef.current) return false;
+    if (options.playSound !== false) {
+      playAudio('blocksIncoming');
+    }
 
-    const boardRect = boardRef.current.getBoundingClientRect();
     const gridElement = boardRef.current.querySelector('.board-grid');
-    if (!gridElement) return;
+    if (!gridElement) return false;
+    const gridRect = gridElement.getBoundingClientRect();
 
     const cellElements = gridElement.children;
     const cellPositions: { x: number; y: number; width: number }[] = [];
@@ -1531,17 +1844,17 @@ const App: React.FC = () => {
     for (let i = 0; i < cellElements.length; i++) {
       const cellRect = cellElements[i].getBoundingClientRect();
       cellPositions.push({
-        x: cellRect.left - boardRect.left,
-        y: cellRect.top - boardRect.top,
+        x: cellRect.left - gridRect.left,
+        y: cellRect.top - gridRect.top,
         width: cellRect.width
       });
     }
 
-    const boardWidth = boardRect.width;
-    const boardHeight = boardRect.height;
+    const boardWidth = gridRect.width;
+    const boardHeight = gridRect.height;
 
     // Create animations for each added block
-    const animations = addedBlocks.map((block) => {
+    const tileAnimations = addedBlocks.map((block) => {
       const cellIndex = block.y * GRID_SIZE + block.x;
       const targetPos = cellPositions[cellIndex];
       if (!targetPos) return null;
@@ -1584,20 +1897,65 @@ const App: React.FC = () => {
         fromPx: { x: fromX, y: fromY },
         toPx: { x: targetPos.x, y: targetPos.y },
         progress: 0,
-        cellSize: targetPos.width
+        cellSize: targetPos.width,
+        isBooster: false as const
       };
     }).filter((a): a is NonNullable<typeof a> => a !== null);
 
-    if (animations.length === 0) return;
+    const incomingBoosters = options.incomingBoosters ?? [];
+    const boosterAnimations = incomingBoosters.map((booster) => {
+      const cellIndex = booster.y * GRID_SIZE + booster.x;
+      const targetPos = cellPositions[cellIndex];
+      if (!targetPos) return null;
 
-    // Set flying IDs synchronously BEFORE any state updates (refs are synchronous)
-    flyingTileIds.current = new Set(addedBlocks.map(b => b.id));
+      const edges = ['top', 'bottom', 'left', 'right'] as const;
+      const edge = edges[Math.floor(Math.random() * edges.length)];
+      let fromX: number;
+      let fromY: number;
+
+      switch (edge) {
+        case 'top':
+          fromX = targetPos.x + (Math.random() - 0.5) * 100;
+          fromY = -targetPos.width - 50;
+          break;
+        case 'bottom':
+          fromX = targetPos.x + (Math.random() - 0.5) * 100;
+          fromY = boardHeight + 50;
+          break;
+        case 'left':
+          fromX = -targetPos.width - 50;
+          fromY = targetPos.y + (Math.random() - 0.5) * 100;
+          break;
+        case 'right':
+        default:
+          fromX = boardWidth + 50;
+          fromY = targetPos.y + (Math.random() - 0.5) * 100;
+          break;
+      }
+
+      return {
+        tile: { color: booster.color, id: booster.id },
+        fromPx: { x: fromX, y: fromY },
+        toPx: { x: targetPos.x, y: targetPos.y },
+        progress: 0,
+        cellSize: targetPos.width,
+        isBooster: true as const,
+        boosterType: booster.type
+      };
+    }).filter((a): a is NonNullable<typeof a> => a !== null);
+
+    const animations = [...tileAnimations, ...boosterAnimations];
+
+    if (animations.length === 0) {
+      options.onComplete?.();
+      return false;
+    }
 
     // Use the same animation system as shuffle
     setShuffleAnimations(animations);
 
     // Animate with requestAnimationFrame
-    const animationDuration = 600; // ms
+    const animationDuration = Math.max(1, options.durationMs ?? 600); // ms
     const startTime = Date.now();
 
     const animateFrame = () => {
@@ -1607,11 +1965,6 @@ const App: React.FC = () => {
       // Ease out cubic for smooth landing
       const easedProgress = 1 - Math.pow(1 - progress, 3);
 
-      // Show grid cells when animation is nearly complete (easedProgress > 0.98 means visually at destination)
-      if (easedProgress > 0.98 && flyingTileIds.current.size > 0) {
-        flyingTileIds.current.clear();
-      }
-
       setShuffleAnimations(prev => prev.map(a => ({ ...a, progress: easedProgress })));
 
       if (progress < 1) {
@@ -1619,21 +1972,126 @@ const App: React.FC = () => {
       } else {
         // Animation complete - clear animations
         setShuffleAnimations([]);
+        options.onComplete?.();
       }
     };
 
     requestAnimationFrame(animateFrame);
-  };
+    return true;
+  }, [playAudio]);
+
+  // Run queued spawn animations right after grid commit, before paint.
+  // This prevents a frame where spawned tiles appear statically first.
+  useLayoutEffect(() => {
+    const pending = pendingIncomingBlocksRef.current;
+    if (!pending || pending.length === 0) return;
+    pendingIncomingBlocksRef.current = null;
+    triggerIncomingBlockAnimation(pending);
+  }, [gameState.grid, triggerIncomingBlockAnimation]);
+
+  const waitForBoardGridReady = useCallback(async (maxFrames = 24): Promise<void> => {
+    for (let frame = 0; frame < maxFrames; frame++) {
+      const board = boardRef.current;
+      const grid = board?.querySelector('.board-grid');
+      if (grid && grid.children.length >= GRID_SIZE * GRID_SIZE) return;
+
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve());
+      });
+    }
+  }, []);
+
+  // Execute queued level intro: keep loading screen visible, then show empty board + flying tiles.
+  useEffect(() => {
+    if (!theme.isReady || !isCriticalAssetsReady || !introRequest) return;
+
+    let cancelled = false;
+    let unlockTimeoutId: number | null = null;
+    const { id, blocks, boosters, minLoadingMs } = introRequest;
+
+    const runIntro = async () => {
+      const startedAt = performance.now();
+      await waitForBoardGridReady();
+
+      const elapsed = performance.now() - startedAt;
+      const remaining = Math.max(0, minLoadingMs - elapsed);
+      if (remaining > 0) {
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, remaining);
+        });
+      }
+
+      if (cancelled || introRequestIdRef.current !== id) return;
+
+      const hasIncomingElements = blocks.length > 0 || boosters.length > 0;
+
+      flushSync(() => {
+        setIsIntroArrivalActive(hasIncomingElements);
+        setShowLoadingScreen(false);
+      });
+
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 250);
+      });
+
+      if (cancelled || introRequestIdRef.current !== id) return;
+
+      let unlocked = false;
+      const unlockGameplay = () => {
+        if (cancelled || introRequestIdRef.current !== id || unlocked) return;
+        unlocked = true;
+        if (unlockTimeoutId !== null) {
+          window.clearTimeout(unlockTimeoutId);
+          unlockTimeoutId = null;
+        }
+        setIsIntroArrivalActive(false);
+        setIsInteractionLocked(false);
+        setIntroRequest(prev => (prev?.id === id ? null : prev));
+      };
+
+      unlockTimeoutId = window.setTimeout(() => {
+        unlockGameplay();
+      }, 1500);
+
+      const started = triggerIncomingBlockAnimation(blocks, {
+        durationMs: 680,
+        playSound: hasIncomingElements,
+        incomingBoosters: boosters,
+        onComplete: unlockGameplay
+      });
+
+      if (!started || !hasIncomingElements) {
+        setIsIntroArrivalActive(false);
+        unlockGameplay();
+      }
+    };
+
+    runIntro();
+
+    return () => {
+      cancelled = true;
+      if (unlockTimeoutId !== null) {
+        window.clearTimeout(unlockTimeoutId);
+      }
+    };
+  }, [
+    introRequest,
+    isCriticalAssetsReady,
+    theme.isReady,
+    triggerIncomingBlockAnimation,
+    waitForBoardGridReady
+  ]);
 
   // Handle shuffle powerup
   const activateShuffle = () => {
+    if (isInteractionLocked) return;
     if (shuffleUses <= 0 || shufflePhase || !boardRef.current) return;
     setShuffleUses(prev => prev - 1);
 
     // Read cell positions BEFORE any transforms are applied
-    const boardRect = boardRef.current.getBoundingClientRect();
     const gridElement = boardRef.current.querySelector('.board-grid');
     if (!gridElement) return;
+    const gridRect = gridElement.getBoundingClientRect();
 
     const cellElements = gridElement.children;
     const cellPositions: { x: number; y: number; width: number }[] = [];
@@ -1641,8 +2099,8 @@ const App: React.FC = () => {
     for (let i = 0; i < cellElements.length; i++) {
       const cellRect = cellElements[i].getBoundingClientRect();
       cellPositions.push({
-        x: cellRect.left - boardRect.left,
-        y: cellRect.top - boardRect.top,
+        x: cellRect.left - gridRect.left,
+        y: cellRect.top - gridRect.top,
         width: cellRect.width
       });
     }
@@ -1933,19 +2391,18 @@ const App: React.FC = () => {
 
     // Spawn particles IMMEDIATELY (like piece placement does)
     if (boardRef.current) {
-      const rect = boardRef.current.getBoundingClientRect();
-      const cellSize = rect.width / GRID_SIZE;
-
       pointsToClear.forEach(p => {
-        const cellCenterX = rect.left + (p.x * cellSize) + (cellSize / 2);
-        const cellCenterY = rect.top + (p.y * cellSize) + (cellSize / 2);
-        spawnParticles(cellCenterX, cellCenterY, p.color, 6);
+        const metrics = getCellMetrics(p.x, p.y);
+        if (metrics) {
+          spawnParticles(metrics.centerX, metrics.centerY, p.color, 6);
+        }
       });
 
       // Floating score text
       const avgX = pointsToClear.reduce((acc, p) => acc + p.x, 0) / pointsToClear.length;
       const avgY = pointsToClear.reduce((acc, p) => acc + p.y, 0) / pointsToClear.length;
-      spawnFloatingText(rect.left + avgX * cellSize, rect.top + avgY * cellSize, `+${totalScore}`);
+      const centerMetrics = getBoardCellMetrics(boardRef.current, avgX, avgY);
+      spawnFloatingText(centerMetrics.centerX, centerMetrics.centerY, `+${totalScore}`);
     }
 
     triggerShake();
@@ -1996,17 +2453,13 @@ const App: React.FC = () => {
   };
 
   const startDragging = (e: React.PointerEvent, index: number) => {
+    if (isInteractionLocked) return;
     if (gameState.hand[index] === null || gameState.gameOver || celebrating || showLevelPopup || showAllClear || trashingAllPieces) return;
 
     // Calculate cell size based on actual board dimensions
-    if (boardRef.current) {
-      const rect = boardRef.current.getBoundingClientRect();
-      const padding = 16; // p-4 = 1rem = 16px
-      const gap = 2; // gap-0.5 = 2px
-      const gridWidth = rect.width - (padding * 2);
-      const totalGaps = (GRID_SIZE - 1) * gap;
-      const cellSize = (gridWidth - totalGaps) / GRID_SIZE;
-      setDragCellSize(cellSize);
+    const placement = getBoardPlacementMetrics();
+    if (placement) {
+      setDragCellSize(placement.cellSize);
     }
 
     setGameState(prev => ({ ...prev, selectedPieceIndex: index }));
@@ -2019,6 +2472,7 @@ const App: React.FC = () => {
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
+    if (isInteractionLocked) return;
     if (gameState.selectedPieceIndex === null || gameState.gameOver) return;
 
     // Calculate velocity for jelly effect - use raw delta, more responsive
@@ -2032,14 +2486,8 @@ const App: React.FC = () => {
 
     setDragPosition({ x: e.clientX, y: e.clientY });
 
-    if (boardRef.current) {
-      const rect = boardRef.current.getBoundingClientRect();
-
-      // Account for padding (p-4 = 1rem = 16px in Tailwind)
-      const padding = 16;
-      const gridWidth = rect.width - (padding * 2);
-      const cellSize = gridWidth / GRID_SIZE;
-
+    const placement = getBoardPlacementMetrics();
+    if (placement) {
       const piece = gameState.hand[gameState.selectedPieceIndex];
       if (!piece) return;
 
@@ -2057,8 +2505,10 @@ const App: React.FC = () => {
       const midY = (minY + maxY) / 2;
 
       // Target grid coordinates for the anchor (0,0) tile, accounting for padding
-      const x = Math.round((visualX - rect.left - padding) / cellSize - midX - 0.5);
-      const y = Math.round((visualY - rect.top - padding) / cellSize - midY - 0.5);
+      const pitchX = placement.cellSize + placement.gapX;
+      const pitchY = placement.cellSize + placement.gapY;
+      const x = Math.round((visualX - placement.left) / pitchX - midX - 0.5);
+      const y = Math.round((visualY - placement.top) / pitchY - midY - 0.5);
 
       if (x >= -2 && x < GRID_SIZE && y >= -2 && y < GRID_SIZE) {
         setHoveredCell({ x, y });
@@ -2069,6 +2519,7 @@ const App: React.FC = () => {
   };
 
   const stopDragging = (e: React.PointerEvent) => {
+    if (isInteractionLocked) return;
     if (gameState.selectedPieceIndex === null) return;
 
     const pieceIndex = gameState.selectedPieceIndex;
@@ -2273,16 +2724,14 @@ const App: React.FC = () => {
 
         // Spawn Visuals
         if (boardRef.current) {
-          const rect = boardRef.current.getBoundingClientRect();
-          const cellSize = rect.width / GRID_SIZE;
-
           // Particles for cleared blocks
           allClearedPoints.forEach(p => {
             const cell = newGrid[p.y][p.x];
             if (cell) {
-              const cellCenterX = rect.left + (p.x * cellSize) + (cellSize / 2);
-              const cellCenterY = rect.top + (p.y * cellSize) + (cellSize / 2);
-              spawnParticles(cellCenterX, cellCenterY, cell.color, 6);
+              const metrics = getCellMetrics(p.x, p.y);
+              if (metrics) {
+                spawnParticles(metrics.centerX, metrics.centerY, cell.color, 6);
+              }
             }
           });
 
@@ -2290,21 +2739,20 @@ const App: React.FC = () => {
           if (text && totalCleared > 0) {
             const avgX = allClearedPoints.reduce((acc, p) => acc + p.x, 0) / totalCleared;
             const avgY = allClearedPoints.reduce((acc, p) => acc + p.y, 0) / totalCleared;
-            const screenX = rect.left + (avgX * cellSize) + (cellSize / 2);
-            const screenY = rect.top + (avgY * cellSize) + (cellSize / 2);
-            spawnFloatingText(screenX, screenY, `${text} x${multiplier}`);
+            const centerMetrics = getBoardCellMetrics(boardRef.current, avgX, avgY);
+            spawnFloatingText(centerMetrics.centerX, centerMetrics.centerY, `${text} x${multiplier}`);
           }
 
           // Show booster creation text
           boostersToCreate.forEach(booster => {
-            const screenX = rect.left + (booster.x * cellSize) + (cellSize / 2);
-            const screenY = rect.top + (booster.y * cellSize) + (cellSize / 2);
+            const metrics = getCellMetrics(booster.x, booster.y);
+            if (!metrics) return;
             const boosterText = booster.type === 'color_ball' ? '⚡ SUPERBALL!' :
                                booster.type === 'bomb' ? '💥 BOMB!' :
                                booster.type === 'line_bomb' ? '💣 LINE!' :
                                booster.type === 'rocket_h' ? '🚀 ROCKET!' :
                                booster.type === 'rocket_v' ? '🚀 ROCKET!' : '💣 LINE!';
-            spawnFloatingText(screenX, screenY - 20, boosterText);
+            spawnFloatingText(metrics.centerX, metrics.centerY - 20, boosterText);
             audio.play('createBooster');
           });
         }
@@ -2374,14 +2822,13 @@ const App: React.FC = () => {
 
                 // Spawn particles for chain reaction
                 if (boardRef.current) {
-                  const rect = boardRef.current.getBoundingClientRect();
-                  const cellSize = rect.width / GRID_SIZE;
                   chainClearedPoints.forEach(p => {
                     const cell = currentGrid[p.y][p.x];
                     if (cell) {
-                      const cellCenterX = rect.left + (p.x * cellSize) + (cellSize / 2);
-                      const cellCenterY = rect.top + (p.y * cellSize) + (cellSize / 2);
-                      spawnParticles(cellCenterX, cellCenterY, cell.color, 6);
+                      const metrics = getCellMetrics(p.x, p.y);
+                      if (metrics) {
+                        spawnParticles(metrics.centerX, metrics.centerY, cell.color, 6);
+                      }
                     }
                   });
                 }
@@ -2452,9 +2899,10 @@ const App: React.FC = () => {
         const result = addRandomBlocks(newGrid, blocksToAdd, gameState.level, boosterPositions);
         const gridWithNewBlocks = result.grid;
 
-        // Trigger flying animation for new blocks
+        // Queue flying animation for new blocks; it will start in a layout effect
+        // right after the grid commit to avoid a static flash on spawn.
         if (result.addedBlocks.length > 0) {
-          setTimeout(() => triggerIncomingBlockAnimation(result.addedBlocks), 0);
+          pendingIncomingBlocksRef.current = result.addedBlocks;
         }
 
         const noValidMoves = isGameOver(gridWithNewBlocks, newHand, gameState.boosters);
@@ -2495,16 +2943,27 @@ const App: React.FC = () => {
 
   return (
     <div
-      className="flex flex-col h-screen w-full max-w-md mx-auto p-4 select-none overflow-hidden"
-      onPointerMove={handlePointerMove}
-      onPointerUp={stopDragging}
+      className="flex justify-center items-center h-screen w-full select-none overflow-hidden"
       style={{
-        backgroundImage: `url(${UI_ASSETS.BACKGROUND})`,
+        backgroundImage: `url(${backgroundImageSrc})`,
         backgroundSize: 'cover',
         backgroundPosition: 'center',
         backgroundRepeat: 'no-repeat'
       }}
     >
+      <div
+        ref={layoutRef}
+        className="flex flex-col"
+        style={{
+          width: '100%',
+          height: '100%',
+          maxHeight: '100%',
+          maxWidth: '100%',
+          padding: `${responsive.layoutPadding}px`
+        }}
+        onPointerMove={handlePointerMove}
+        onPointerUp={stopDragging}
+      >
       <style>{`
         .board-grid {
           display: grid;
@@ -2800,7 +3259,11 @@ const App: React.FC = () => {
       </div>
 
       {/* Level & Score Card */}
-      <div className="bg-slate-900 rounded-3xl p-4 mb-4 shadow-xl border border-slate-800 relative overflow-hidden">
+      <div
+        ref={headerCardRef}
+        className="bg-slate-900 rounded-3xl p-4 shadow-xl border border-slate-800 relative overflow-hidden"
+        style={{ marginBottom: `${responsive.layoutGap}px` }}
+      >
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-purple-600 opacity-50"></div>
 
         {/* Top row: Level left, Moves center */}
@@ -2862,22 +3325,22 @@ const App: React.FC = () => {
       </div>
 
       {/* Game Board Container */}
-      <div
+      <ResponsiveNineSlicePanel
         ref={boardRef}
-        className={`relative aspect-square p-4 shadow-2xl ${isShaking ? 'shake-animation' : ''}`}
+        src={boardPanelSrc}
+        {...boardPanelConfig}
+        widthPercent={responsive.boardWidthPercent}
+        className={`relative shadow-2xl ${isShaking ? 'shake-animation' : ''}`}
         style={{
-          aspectRatio: '1 / 1',
-          width: '100%',
-          maxWidth: '100%',
-          flexShrink: 0,
-          backgroundImage: `url(${UI_ASSETS.CONTAINER})`,
-          backgroundSize: 'contain',
-          backgroundPosition: 'center',
-          backgroundRepeat: 'no-repeat',
+          padding: `${responsive.boardInnerPadding}px`,
+          marginBottom: `${responsive.layoutGap}px`,
           zIndex: shufflePhase || superballAnimation ? 40 : undefined
         }}
       >
-        <div className="board-grid w-full h-full gap-0.5">
+        <div
+          className="board-grid w-full h-full"
+          style={{ gap: `${responsive.boardCellGap}px` }}
+        >
           {gameState.grid.map((row, y) =>
             row.map((cell, x) => {
               const ghost = isGhostCell(x, y);
@@ -2892,14 +3355,16 @@ const App: React.FC = () => {
               const ghostHasImage = ghostColor && isIconPath(ghostColor);
 
               // Check if this cell is being animated (flying in) - use ref for synchronous check
-              const isFlying = cell && flyingTileIds.current.has(cell.id);
+              const isFlying = cell && activeIncomingIds.tileIds.has(cell.id);
+              const isBoosterFlying = booster && activeIncomingIds.boosterIds.has(booster.id);
+              const hideStaticForIntro = isIntroArrivalActive;
 
               // Calculate background
               let bgColor = 'transparent'; // empty cell
               let bgImage = `url(${UI_ASSETS.SLOT})`; // empty cells show slot
               let cellOpacity = 0.5; // default for empty slots
 
-              if (isFlying) {
+              if (hideStaticForIntro || isFlying || isBoosterFlying) {
                 // Hide cell while it's flying - show empty slot
                 bgColor = 'transparent';
                 bgImage = `url(${UI_ASSETS.SLOT})`;
@@ -2951,17 +3416,18 @@ const App: React.FC = () => {
                   key={`${x}-${y}`}
                   data-cell={`${x},${y}`}
                   onClick={() => {
+                    if (isInteractionLocked) return;
                     if (deleteBlockMode && cell && !booster) {
                       handleDeleteBlock(x, y);
                     } else if (wildcardMode && cell && !booster) {
                       handleWildcard(x, y);
-                    } else if (booster && !shufflePhase && !deleteBlockMode && !wildcardMode) {
+                    } else if (booster && !hideStaticForIntro && !isBoosterFlying && !shufflePhase && !deleteBlockMode && !wildcardMode) {
                       activateBooster(booster);
                     }
                   }}
                   className={`
                     relative
-                    ${booster && !shufflePhase && !deleteBlockMode && !wildcardMode && !superballAnimation ? 'cursor-pointer active:scale-95' : ''}
+                    ${booster && !hideStaticForIntro && !isBoosterFlying && !shufflePhase && !deleteBlockMode && !wildcardMode && !superballAnimation ? 'cursor-pointer active:scale-95' : ''}
                     ${deleteBlockMode && cell && !booster ? 'cursor-pointer z-50 hover:scale-110 hover:brightness-125' : ''}
                     ${wildcardMode && cell && !booster ? 'cursor-pointer z-50 hover:scale-110 hover:brightness-125' : ''}
                     ${shufflePhase === 'levitating' && cell ? 'z-20 shadow-lg' : ''}
@@ -2971,7 +3437,9 @@ const App: React.FC = () => {
                     backgroundColor: bgColor,
                     backgroundImage: bgImage,
                     backgroundSize: '100% 100%',
-                    transition: shufflePhase ? 'transform 0.3s, box-shadow 0.3s' : 'all 0.2s',
+                    transition: (isIntroArrivalActive || shuffleAnimations.length > 0)
+                      ? 'none'
+                      : 'transform 0.2s, box-shadow 0.2s',
                     backgroundPosition: 'center',
                     backgroundRepeat: 'no-repeat',
                     opacity: cellOpacity,
@@ -3011,7 +3479,7 @@ const App: React.FC = () => {
                       }} />
                     </div>
                   )}
-                  {booster && (
+                  {booster && !hideStaticForIntro && !isBoosterFlying && (
                     <div
                       className="absolute inset-0 flex items-center justify-center"
                       style={booster.type === 'color_ball' ? {} : { animation: 'pulse 1s ease-in-out infinite' }}
@@ -3093,8 +3561,8 @@ const App: React.FC = () => {
                 : `0 ${6 - 2 * ((moveProgress - 0.7) / 0.3)}px ${20 - 12 * ((moveProgress - 0.7) / 0.3)}px rgba(0,0,0,${0.4 - 0.1 * ((moveProgress - 0.7) / 0.3)})`;
 
               // Render booster differently
-              if ((anim as any).isBooster) {
-                const boosterType = (anim as any).boosterType;
+              if (anim.isBooster) {
+                const boosterType = anim.boosterType;
                 return (
                   <div
                     key={`fly-booster-${anim.tile.id}-${i}`}
@@ -3193,14 +3661,18 @@ const App: React.FC = () => {
         {/* Level Complete Screen */}
         {showLevelPopup && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100]" onClick={(e) => e.stopPropagation()}>
-            <div className="bg-slate-900 rounded-3xl p-6 mx-4 max-w-sm w-full border border-slate-700 shadow-2xl text-center">
+            <NineSlice
+              src={theme.panel('panel_main')}
+              {...theme.config('panel_main')}
+              className="p-6 mx-4 max-w-sm w-full text-center"
+            >
               <div className="text-6xl mb-4">🎉</div>
               <h2 className="text-3xl font-black mb-1 bg-gradient-to-r from-green-400 to-emerald-500 bg-clip-text text-transparent">
                 LEVEL {gameState.level} COMPLETE!
               </h2>
               <p className="text-slate-400 text-sm mb-6 font-medium">All objectives cleared!</p>
-              <div className="bg-slate-800 rounded-2xl p-4 w-full mb-6 border border-slate-700">
-                <span className="text-slate-500 text-[10px] uppercase font-bold tracking-widest block mb-2">Score</span>
+              <div className="bg-slate-800/50 rounded-2xl p-4 w-full mb-6">
+                <span className="text-slate-400 text-[10px] uppercase font-bold tracking-widest block mb-2">Score</span>
                 <span className="text-4xl font-black text-white">{gameState.score}</span>
               </div>
               <button
@@ -3209,7 +3681,7 @@ const App: React.FC = () => {
               >
                 NEXT LEVEL →
               </button>
-            </div>
+            </NineSlice>
           </div>
         )}
 
@@ -3234,7 +3706,7 @@ const App: React.FC = () => {
             </div>
           </div>
         )}
-      </div>
+      </ResponsiveNineSlicePanel>
 
 
       {/* Drag Preview */}
@@ -3291,75 +3763,99 @@ const App: React.FC = () => {
       })()}
 
       {/* Piece Selection Rack */}
-      <div className="mt-4">
+      <ResponsiveNineSlicePanel
+        src={rackPanelSrc}
+        {...rackPanelConfig}
+        widthPercent={responsive.rackWidthPercent}
+        className="w-full flex justify-center items-center"
+        style={{
+          paddingLeft: `${responsive.rackPaddingX}px`,
+          paddingRight: `${responsive.rackPaddingX}px`,
+          paddingTop: `${responsive.layoutGap * 0.35}px`,
+          paddingBottom: `${responsive.layoutGap * 0.35}px`
+        }}
+      >
+        {/* Pieces Container */}
         <div
-          className="flex justify-center items-center px-6"
-          style={{
-            backgroundImage: `url(${UI_ASSETS.CONTAINER_NEXT_MAIN})`,
-            backgroundSize: '100% 100%',
-            backgroundPosition: 'center',
-            backgroundRepeat: 'no-repeat',
-            height: '140px'
-          }}
+          className="flex justify-around items-center w-full h-full"
+          style={{ gap: `${responsive.rackSlotGap}px` }}
         >
-          {/* Pieces Container */}
-          <div className="flex justify-around items-center gap-1 w-full">
-            {gameState.hand.map((piece, index) => (
+          {gameState.hand.map((piece, index) => (
+            <div
+              key={piece?.id || `empty-${index}`}
+              ref={el => pieceRefs.current[index] = el}
+              className={`
+                flex items-center justify-center
+                relative transition-all duration-300
+                ${piece === null && fadingBoxIndex?.index !== index ? 'opacity-0 pointer-events-none' : ''}
+                ${fadingBoxIndex?.index === index && fadingBoxIndex.fading ? 'opacity-0' : ''}
+                ${fadingInPieceIndex === index ? 'opacity-0' : ''}
+                ${trashingAllPieces && piece ? 'piece-trashing' : ''}
+              `}
+              style={{
+                width: `${responsive.rackSlotWidth}px`,
+                aspectRatio: `${responsive.rackSlotAspectRatio}`,
+                animationDelay: trashingAllPieces ? `${index * 0.05}s` : undefined
+              }}
+            >
+              <img
+                src={UI_ASSETS.CONTAINER_NEXT_PIECE}
+                alt=""
+                className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+                draggable={false}
+              />
+              {/* Piece (draggable area) */}
               <div
-                key={piece?.id || `empty-${index}`}
-                ref={el => pieceRefs.current[index] = el}
-                className={`
-                  flex items-center justify-center
-                  relative transition-all duration-300
-                  ${piece === null && fadingBoxIndex?.index !== index ? 'opacity-0 pointer-events-none' : ''}
-                  ${fadingBoxIndex?.index === index && fadingBoxIndex.fading ? 'opacity-0' : ''}
-                  ${fadingInPieceIndex === index ? 'opacity-0' : ''}
-                  ${trashingAllPieces && piece ? 'piece-trashing' : ''}
-                `}
-                style={{
-                  backgroundImage: `url(${UI_ASSETS.CONTAINER_NEXT_PIECE})`,
-                  backgroundSize: '100% 100%',
-                  backgroundPosition: 'center',
-                  backgroundRepeat: 'no-repeat',
-                  width: '115px',
-                  height: '115px',
-                  animationDelay: trashingAllPieces ? `${index * 0.05}s` : undefined
-                }}
+                onPointerDown={(e) => startDragging(e, index)}
+                className="flex items-center justify-center w-full h-full touch-none cursor-grab"
+                style={{ transform: 'scale(0.95)' }}
               >
-                {/* Piece (draggable area) */}
-                <div
-                  onPointerDown={(e) => startDragging(e, index)}
-                  className="flex items-center justify-center p-1 w-full h-full touch-none cursor-grab"
-                  style={{ transform: 'scale(0.95)' }}
-                >
-                  {piece && gameState.selectedPieceIndex !== index && returningPiece?.index !== index && (
-                    <PiecePreview piece={piece} active={false} containerSize={95} />
-                  )}
-                </div>
+                {piece && gameState.selectedPieceIndex !== index && returningPiece?.index !== index && (
+                  <PiecePreview piece={piece} active={false} containerSize={responsive.rackPieceSize * 0.82} />
+                )}
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
-      </div>
+      </ResponsiveNineSlicePanel>
 
-      {/* Spacer to push powerups to bottom */}
-      <div className="flex-grow" />
+      {/* Reserve bottom space in normal flow so fixed powerups never overlap content */}
+      <div style={{ height: `${responsive.reservedBottomSpace}px`, flexShrink: 0 }} />
 
       {/* Powerup Buttons - Fixed at bottom */}
-      <div className="flex justify-center gap-4 sm:gap-6 pb-4 pt-2">
+      <div
+        className="fixed left-1/2 z-20 flex -translate-x-1/2 justify-center"
+        style={{
+          bottom: `${responsive.powerupBottomOffset}px`,
+          width: `${responsive.powerupRowWidth}px`,
+          gap: `${responsive.powerupGap}px`,
+          paddingTop: `${responsive.powerupTopPadding}px`,
+          paddingBottom: `${responsive.powerupBottomPadding}px`
+        }}
+      >
         {/* Delete Block Button */}
         <button
-          onClick={() => deleteBlockUses > 0 && !shufflePhase && !trashingAllPieces && !deleteBlockMode && !wildcardMode && setDeleteBlockMode(true)}
-          disabled={deleteBlockUses <= 0 || !!shufflePhase || trashingAllPieces || deleteBlockMode || wildcardMode}
+          onClick={() => !isInteractionLocked && deleteBlockUses > 0 && !shufflePhase && !trashingAllPieces && !deleteBlockMode && !wildcardMode && setDeleteBlockMode(true)}
+          disabled={isInteractionLocked || deleteBlockUses <= 0 || !!shufflePhase || trashingAllPieces || deleteBlockMode || wildcardMode}
           className={`
-            w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center relative
+            rounded-full flex items-center justify-center relative
             transition-all duration-200 active:scale-95
             ${deleteBlockUses > 0 && !deleteBlockMode && !wildcardMode ? 'bg-gradient-to-br from-cyan-500 to-blue-600 shadow-lg shadow-cyan-500/30' : 'bg-slate-700 opacity-50'}
           `}
+          style={{ width: `${responsive.powerupButtonSize}px`, height: `${responsive.powerupButtonSize}px` }}
         >
-          <i className="fa-solid fa-crosshairs text-lg sm:text-xl md:text-2xl text-white"></i>
+          <i className="fa-solid fa-crosshairs text-white" style={{ fontSize: `${responsive.powerupIconSize}px` }}></i>
           {deleteBlockUses > 0 && (
-            <div className="absolute -top-1 -right-1 w-4 h-4 sm:w-5 sm:h-5 bg-yellow-400 rounded-full flex items-center justify-center text-[8px] sm:text-[10px] font-bold text-black">
+            <div
+              className="absolute bg-yellow-400 rounded-full flex items-center justify-center font-bold text-black"
+              style={{
+                width: `${responsive.powerupBadgeSize}px`,
+                height: `${responsive.powerupBadgeSize}px`,
+                top: `${-responsive.powerupBadgeSize * 0.22}px`,
+                right: `${-responsive.powerupBadgeSize * 0.22}px`,
+                fontSize: `${responsive.powerupBadgeFontSize}px`
+              }}
+            >
               {deleteBlockUses}
             </div>
           )}
@@ -3367,17 +3863,27 @@ const App: React.FC = () => {
 
         {/* Wildcard Button */}
         <button
-          onClick={() => wildcardUses > 0 && !shufflePhase && !trashingAllPieces && !deleteBlockMode && !wildcardMode && setWildcardMode(true)}
-          disabled={wildcardUses <= 0 || !!shufflePhase || trashingAllPieces || deleteBlockMode || wildcardMode}
+          onClick={() => !isInteractionLocked && wildcardUses > 0 && !shufflePhase && !trashingAllPieces && !deleteBlockMode && !wildcardMode && setWildcardMode(true)}
+          disabled={isInteractionLocked || wildcardUses <= 0 || !!shufflePhase || trashingAllPieces || deleteBlockMode || wildcardMode}
           className={`
-            w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center relative
+            rounded-full flex items-center justify-center relative
             transition-all duration-200 active:scale-95
             ${wildcardUses > 0 && !wildcardMode && !deleteBlockMode ? 'bg-gradient-to-br from-yellow-500 to-amber-600 shadow-lg shadow-yellow-500/30' : 'bg-slate-700 opacity-50'}
           `}
+          style={{ width: `${responsive.powerupButtonSize}px`, height: `${responsive.powerupButtonSize}px` }}
         >
-          <i className="fa-solid fa-wand-magic-sparkles text-lg sm:text-xl md:text-2xl text-white"></i>
+          <i className="fa-solid fa-wand-magic-sparkles text-white" style={{ fontSize: `${responsive.powerupIconSize}px` }}></i>
           {wildcardUses > 0 && (
-            <div className="absolute -top-1 -right-1 w-4 h-4 sm:w-5 sm:h-5 bg-yellow-400 rounded-full flex items-center justify-center text-[8px] sm:text-[10px] font-bold text-black">
+            <div
+              className="absolute bg-yellow-400 rounded-full flex items-center justify-center font-bold text-black"
+              style={{
+                width: `${responsive.powerupBadgeSize}px`,
+                height: `${responsive.powerupBadgeSize}px`,
+                top: `${-responsive.powerupBadgeSize * 0.22}px`,
+                right: `${-responsive.powerupBadgeSize * 0.22}px`,
+                fontSize: `${responsive.powerupBadgeFontSize}px`
+              }}
+            >
               {wildcardUses}
             </div>
           )}
@@ -3385,17 +3891,27 @@ const App: React.FC = () => {
 
         {/* Shuffle Button */}
         <button
-          onClick={() => shuffleUses > 0 && !shufflePhase && !trashingAllPieces && !deleteBlockMode && !wildcardMode && activateShuffle()}
-          disabled={shuffleUses <= 0 || !!shufflePhase || trashingAllPieces || deleteBlockMode || wildcardMode}
+          onClick={() => !isInteractionLocked && shuffleUses > 0 && !shufflePhase && !trashingAllPieces && !deleteBlockMode && !wildcardMode && activateShuffle()}
+          disabled={isInteractionLocked || shuffleUses <= 0 || !!shufflePhase || trashingAllPieces || deleteBlockMode || wildcardMode}
           className={`
-            w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center relative
+            rounded-full flex items-center justify-center relative
             transition-all duration-200 active:scale-95
             ${shuffleUses > 0 && !shufflePhase && !deleteBlockMode && !wildcardMode ? 'bg-gradient-to-br from-purple-500 to-indigo-600 shadow-lg shadow-purple-500/30' : 'bg-slate-700 opacity-50'}
           `}
+          style={{ width: `${responsive.powerupButtonSize}px`, height: `${responsive.powerupButtonSize}px` }}
         >
-          <i className="fa-solid fa-shuffle text-lg sm:text-xl md:text-2xl text-white"></i>
+          <i className="fa-solid fa-shuffle text-white" style={{ fontSize: `${responsive.powerupIconSize}px` }}></i>
           {shuffleUses > 0 && (
-            <div className="absolute -top-1 -right-1 w-4 h-4 sm:w-5 sm:h-5 bg-yellow-400 rounded-full flex items-center justify-center text-[8px] sm:text-[10px] font-bold text-black">
+            <div
+              className="absolute bg-yellow-400 rounded-full flex items-center justify-center font-bold text-black"
+              style={{
+                width: `${responsive.powerupBadgeSize}px`,
+                height: `${responsive.powerupBadgeSize}px`,
+                top: `${-responsive.powerupBadgeSize * 0.22}px`,
+                right: `${-responsive.powerupBadgeSize * 0.22}px`,
+                fontSize: `${responsive.powerupBadgeFontSize}px`
+              }}
+            >
               {shuffleUses}
             </div>
           )}
@@ -3403,17 +3919,27 @@ const App: React.FC = () => {
 
         {/* Refresh Button (was Trash) */}
         <button
-          onClick={() => trashUses > 0 && !shufflePhase && !trashingAllPieces && !deleteBlockMode && !wildcardMode && activateTrash()}
-          disabled={trashUses <= 0 || !!shufflePhase || trashingAllPieces || deleteBlockMode || wildcardMode}
+          onClick={() => !isInteractionLocked && trashUses > 0 && !shufflePhase && !trashingAllPieces && !deleteBlockMode && !wildcardMode && activateTrash()}
+          disabled={isInteractionLocked || trashUses <= 0 || !!shufflePhase || trashingAllPieces || deleteBlockMode || wildcardMode}
           className={`
-            w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center relative
+            rounded-full flex items-center justify-center relative
             transition-all duration-200 active:scale-95
             ${trashUses > 0 && !trashingAllPieces && !deleteBlockMode && !wildcardMode ? 'bg-gradient-to-br from-red-500 to-orange-600 shadow-lg shadow-red-500/30' : 'bg-slate-700 opacity-50'}
           `}
+          style={{ width: `${responsive.powerupButtonSize}px`, height: `${responsive.powerupButtonSize}px` }}
         >
-          <i className="fa-solid fa-rotate text-lg sm:text-xl md:text-2xl text-white"></i>
+          <i className="fa-solid fa-rotate text-white" style={{ fontSize: `${responsive.powerupIconSize}px` }}></i>
           {trashUses > 0 && (
-            <div className="absolute -top-1 -right-1 w-4 h-4 sm:w-5 sm:h-5 bg-yellow-400 rounded-full flex items-center justify-center text-[8px] sm:text-[10px] font-bold text-black">
+            <div
+              className="absolute bg-yellow-400 rounded-full flex items-center justify-center font-bold text-black"
+              style={{
+                width: `${responsive.powerupBadgeSize}px`,
+                height: `${responsive.powerupBadgeSize}px`,
+                top: `${-responsive.powerupBadgeSize * 0.22}px`,
+                right: `${-responsive.powerupBadgeSize * 0.22}px`,
+                fontSize: `${responsive.powerupBadgeFontSize}px`
+              }}
+            >
               {trashUses}
             </div>
           )}
@@ -3542,6 +4068,20 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
+      </div>
+
+      {showLoadingScreen && (
+        <div
+          className="fixed inset-0 z-[220]"
+          style={{
+            backgroundImage: `url(${loadingLevelTemplateSrc}), url(${loadingSplashTemplateSrc}), url(${backgroundImageSrc})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            backgroundRepeat: 'no-repeat',
+            pointerEvents: 'auto'
+          }}
+        />
+      )}
     </div>
   );
 };
@@ -3561,6 +4101,7 @@ const PiecePreview: React.FC<{ piece: PieceData, active: boolean, cellSize?: num
 
   // Calculate optimal cell size based on piece dimensions and container
   let finalCellSize: number;
+  const previewGapRatio = 0.08;
   const maxCellSize = 28; // Limit max size (between 2x2 and 3x3 feel)
   if (cellSize !== undefined) {
     // Explicit cell size (used for drag preview to match board)
@@ -3568,13 +4109,13 @@ const PiecePreview: React.FC<{ piece: PieceData, active: boolean, cellSize?: num
   } else if (containerSize !== undefined) {
     // Fit piece to container - use the larger dimension to constrain
     const maxDimension = Math.max(width, height);
-    const gap = 2; // gap-0.5 = 2px
-    const totalGaps = (maxDimension - 1) * gap;
-    finalCellSize = Math.min(maxCellSize, Math.floor((containerSize - totalGaps) / maxDimension));
+    const denominator = maxDimension + ((maxDimension - 1) * previewGapRatio);
+    finalCellSize = Math.min(maxCellSize, Math.floor(containerSize / Math.max(1, denominator)));
   } else {
     // Default fallback
     finalCellSize = 20;
   }
+  const previewCellGap = Math.max(1, Math.round(finalCellSize * previewGapRatio));
 
   // Squash & stretch for the whole piece based on velocity
   let containerTransform = '';
@@ -3594,10 +4135,11 @@ const PiecePreview: React.FC<{ piece: PieceData, active: boolean, cellSize?: num
 
   return (
     <div
-      className="piece-preview-grid gap-0.5"
+      className="piece-preview-grid"
       style={{
         gridTemplateColumns: `repeat(${width}, 1fr)`,
         gridTemplateRows: `repeat(${height}, 1fr)`,
+        gap: `${previewCellGap}px`,
         width: 'auto',
         maxHeight: '100%',
         maxWidth: '100%',
