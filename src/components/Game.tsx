@@ -318,6 +318,33 @@ const removeTilesAtPoints = (grid: GameState['grid'], points: Point[]): GameStat
   return maskedGrid;
 };
 
+const seedLevelOneInitialSixMatch = (
+  grid: GameState['grid'],
+  level: number,
+  boosters: Booster[]
+): GameState['grid'] => {
+  if (level !== 1) return grid;
+
+  const seededGrid = grid.map((row) => [...row]);
+  const boosterCells = new Set(boosters.map((booster) => `${booster.x},${booster.y}`));
+  const rowY = 0;
+  const startX = 0;
+  const forcedColor = Color.BLUE;
+
+  for (let offset = 0; offset < 6; offset++) {
+    const x = startX + offset;
+    if (x < 0 || x >= GRID_SIZE) continue;
+    if (boosterCells.has(`${x},${rowY}`)) continue;
+
+    seededGrid[rowY][x] = {
+      color: forcedColor,
+      id: `lvl1-seed-${Date.now()}-${offset}-${Math.random()}`
+    };
+  }
+
+  return seededGrid;
+};
+
 const collectGridBlocksForIntro = (
   grid: GameState['grid'],
   boosters: Booster[] = []
@@ -338,6 +365,126 @@ const collectGridBlocksForIntro = (
     }
   }
   return blocks;
+};
+
+const collectUniqueMatchPoints = (points: Point[]): Point[] => {
+  const unique = new Map<string, Point>();
+  for (const point of points) {
+    unique.set(`${point.x},${point.y}`, point);
+  }
+  return Array.from(unique.values());
+};
+
+const resolveMatchBoosterOutcome = (
+  grid: GameState['grid'],
+  matchPointsInput: Point[]
+): { pointsToClear: Point[]; boostersToCreate: Booster[] } => {
+  const matchPoints = collectUniqueMatchPoints(matchPointsInput);
+  const pointsToClear = [...matchPoints];
+  const boostersToCreate: Booster[] = [];
+  const totalForBooster = matchPoints.length;
+
+  if (totalForBooster < 4) {
+    return { pointsToClear, boostersToCreate };
+  }
+
+  const clearedColorSet = new Set<Color>();
+  matchPoints.forEach((point) => {
+    const cell = grid[point.y]?.[point.x];
+    if (cell) clearedColorSet.add(cell.color);
+  });
+  const uniqueColorsCleared = clearedColorSet.size;
+
+  const avgX = matchPoints.reduce((acc, point) => acc + point.x, 0) / totalForBooster;
+  const avgY = matchPoints.reduce((acc, point) => acc + point.y, 0) / totalForBooster;
+
+  let centerPoint = matchPoints[0];
+  let minDist = Infinity;
+  matchPoints.forEach((point) => {
+    const dist = Math.abs(point.x - avgX) + Math.abs(point.y - avgY);
+    if (dist < minDist) {
+      minDist = dist;
+      centerPoint = point;
+    }
+  });
+
+  const centerCell = grid[centerPoint.y]?.[centerPoint.x];
+  if (!centerCell) {
+    return { pointsToClear, boostersToCreate };
+  }
+
+  const removeCenterPoint = () => {
+    const index = pointsToClear.findIndex(
+      (point) => point.x === centerPoint.x && point.y === centerPoint.y
+    );
+    if (index >= 0) pointsToClear.splice(index, 1);
+  };
+
+  if (totalForBooster >= 6 && uniqueColorsCleared >= 2) {
+    const clearedSet = new Set(matchPoints.map((point) => `${point.x},${point.y}`));
+    const gridColorCounts = new Map<Color, number>();
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        const cell = grid[y][x];
+        if (!cell || clearedSet.has(`${x},${y}`)) continue;
+        gridColorCounts.set(cell.color, (gridColorCounts.get(cell.color) ?? 0) + 1);
+      }
+    }
+
+    let mostCommonGridColor: Color | null = null;
+    let maxCount = -1;
+    gridColorCounts.forEach((count, color) => {
+      if (count > maxCount) {
+        maxCount = count;
+        mostCommonGridColor = color;
+      }
+    });
+
+    boostersToCreate.push({
+      id: `booster-${Date.now()}-${Math.random()}`,
+      type: 'color_ball',
+      x: centerPoint.x,
+      y: centerPoint.y,
+      color: mostCommonGridColor ?? centerCell.color
+    });
+    removeCenterPoint();
+    return { pointsToClear, boostersToCreate };
+  }
+
+  if (totalForBooster >= 6) {
+    boostersToCreate.push({
+      id: `booster-${Date.now()}-${Math.random()}`,
+      type: 'bomb',
+      x: centerPoint.x,
+      y: centerPoint.y,
+      color: centerCell.color
+    });
+    removeCenterPoint();
+    return { pointsToClear, boostersToCreate };
+  }
+
+  if (totalForBooster === 5) {
+    boostersToCreate.push({
+      id: `booster-${Date.now()}-${Math.random()}`,
+      type: 'line_bomb',
+      x: centerPoint.x,
+      y: centerPoint.y,
+      color: centerCell.color
+    });
+    removeCenterPoint();
+    return { pointsToClear, boostersToCreate };
+  }
+
+  const isHorizontal = Math.random() < 0.5;
+  boostersToCreate.push({
+    id: `booster-${Date.now()}-${Math.random()}`,
+    type: isHorizontal ? 'rocket_h' : 'rocket_v',
+    x: centerPoint.x,
+    y: centerPoint.y,
+    color: centerCell.color
+  });
+  removeCenterPoint();
+  return { pointsToClear, boostersToCreate };
 };
 
 const resolveSuperballTargetColor = (
@@ -843,10 +990,11 @@ export const Game: React.FC = () => {
     const initialLevel = 1;
     const levelConfig = getLevelConfig(initialLevel);
     const initialBoosters = createLevelOneTestBoosters();
-    const initialGrid = removeTilesAtPoints(
+    const baseInitialGrid = removeTilesAtPoints(
       createRandomGrid(levelConfig.gridFill, initialLevel),
       initialBoosters.map(booster => ({ x: booster.x, y: booster.y }))
     );
+    const initialGrid = seedLevelOneInitialSixMatch(baseInitialGrid, initialLevel, initialBoosters);
     const initialHand = generateValidHand(initialGrid, initialLevel);
     return {
       grid: initialGrid,
@@ -2187,10 +2335,11 @@ export const Game: React.FC = () => {
     const initialLevel = 1;
     const levelConfig = getLevelConfig(initialLevel);
     const initialBoosters = createLevelOneTestBoosters();
-    const initialGrid = removeTilesAtPoints(
+    const baseInitialGrid = removeTilesAtPoints(
       createRandomGrid(levelConfig.gridFill, initialLevel),
       initialBoosters.map(booster => ({ x: booster.x, y: booster.y }))
     );
+    const initialGrid = seedLevelOneInitialSixMatch(baseInitialGrid, initialLevel, initialBoosters);
     setGameState({
       grid: initialGrid,
       boosters: initialBoosters,
@@ -3094,17 +3243,30 @@ export const Game: React.FC = () => {
     const matchGroups = findMatchGroups(newGrid);
     if (matchGroups.length === 0) return;
 
-    // Collect all cleared points
-    const pointsToClear: { x: number; y: number; color: Color }[] = [];
+    // Collect all matched points first, then resolve booster outcome using the same
+    // rules as manual placement.
+    const matchedPoints: Point[] = [];
     matchGroups.forEach(group => {
       group.forEach(p => {
-        if (!pointsToClear.some(cp => cp.x === p.x && cp.y === p.y)) {
-          const tile = newGrid[p.y][p.x];
-          if (tile) {
-            pointsToClear.push({ x: p.x, y: p.y, color: tile.color });
-          }
+        if (!matchedPoints.some(cp => cp.x === p.x && cp.y === p.y)) {
+          matchedPoints.push({ x: p.x, y: p.y });
         }
       });
+    });
+
+    const boosterOutcome = resolveMatchBoosterOutcome(newGrid, matchedPoints);
+    const pointsToClear = boosterOutcome.pointsToClear
+      .map((point) => {
+        const tile = newGrid[point.y][point.x];
+        if (!tile) return null;
+        return { x: point.x, y: point.y, color: tile.color };
+      })
+      .filter((point): point is { x: number; y: number; color: Color } => Boolean(point));
+    const boostersToCreate = boosterOutcome.boostersToCreate;
+
+    const resolvedGrid = newGrid.map(row => [...row]);
+    boostersToCreate.forEach((booster) => {
+      resolvedGrid[booster.y][booster.x] = null;
     });
 
     // Calculate score
@@ -3130,10 +3292,24 @@ export const Game: React.FC = () => {
       });
 
       // Floating score text
-      const avgX = pointsToClear.reduce((acc, p) => acc + p.x, 0) / pointsToClear.length;
-      const avgY = pointsToClear.reduce((acc, p) => acc + p.y, 0) / pointsToClear.length;
-      const centerMetrics = getBoardCellMetrics(boardRef.current, avgX, avgY);
-      spawnFloatingText(centerMetrics.centerX, centerMetrics.centerY, `+${totalScore}`);
+      if (pointsToClear.length > 0) {
+        const avgX = pointsToClear.reduce((acc, p) => acc + p.x, 0) / pointsToClear.length;
+        const avgY = pointsToClear.reduce((acc, p) => acc + p.y, 0) / pointsToClear.length;
+        const centerMetrics = getBoardCellMetrics(boardRef.current, avgX, avgY);
+        spawnFloatingText(centerMetrics.centerX, centerMetrics.centerY, `+${totalScore}`);
+      }
+
+      boostersToCreate.forEach((booster) => {
+        const metrics = getCellMetrics(booster.x, booster.y);
+        if (!metrics) return;
+        const boosterText = booster.type === 'color_ball' ? '⚡ SUPERBALL!' :
+                           booster.type === 'bomb' ? '💥 BOMB!' :
+                           booster.type === 'line_bomb' ? '💣 LINE!' :
+                           booster.type === 'rocket_h' ? '🚀 ROCKET!' :
+                           booster.type === 'rocket_v' ? '🚀 ROCKET!' : '💣 LINE!';
+        spawnFloatingText(metrics.centerX, metrics.centerY - 20, boosterText);
+        audio.play('createBooster');
+      });
     }
 
     triggerShake();
@@ -3149,7 +3325,8 @@ export const Game: React.FC = () => {
 
       return {
         ...prev,
-        grid: newGrid,
+        grid: resolvedGrid,
+        boosters: [...prev.boosters, ...boostersToCreate],
         score: prev.score + totalScore,
         clearingTiles: matchingIds,
         objectives: newObjectives,
@@ -3420,91 +3597,9 @@ export const Game: React.FC = () => {
           });
         });
 
-        // Determine booster based on TOTAL blocks cleared (sum of all colors)
-        const boostersToCreate: Booster[] = [];
-        const totalForBooster = allClearedPoints.length;
-
-        // Count unique colors in cleared points
-        const clearedColorSet = new Set<Color>();
-        allClearedPoints.forEach(p => {
-          const cell = newGrid[p.y][p.x];
-          if (cell) clearedColorSet.add(cell.color);
-        });
-        const uniqueColorsCleared = clearedColorSet.size;
-
-        if (totalForBooster >= 4) {
-          // Find center of ALL cleared points for booster placement
-          const avgX = allClearedPoints.reduce((acc, p) => acc + p.x, 0) / totalForBooster;
-          const avgY = allClearedPoints.reduce((acc, p) => acc + p.y, 0) / totalForBooster;
-
-          // Find the actual point closest to center
-          let centerPoint = allClearedPoints[0];
-          let minDist = Infinity;
-          allClearedPoints.forEach(p => {
-            const dist = Math.abs(p.x - avgX) + Math.abs(p.y - avgY);
-            if (dist < minDist) {
-              minDist = dist;
-              centerPoint = p;
-            }
-          });
-
-          const centerCell = newGrid[centerPoint.y][centerPoint.x];
-
-          if (totalForBooster >= 6 && uniqueColorsCleared >= 2 && centerCell) {
-            // Superball - 6+ blocks with 2+ colors: eliminates all of most common color on grid
-            const gridColorCounts: Record<string, number> = {};
-            const clearedSet = new Set(allClearedPoints.map(p => `${p.x},${p.y}`));
-            for (let gy = 0; gy < GRID_SIZE; gy++) {
-              for (let gx = 0; gx < GRID_SIZE; gx++) {
-                const cell = newGrid[gy][gx];
-                if (cell && !clearedSet.has(`${gx},${gy}`)) {
-                  gridColorCounts[cell.color] = (gridColorCounts[cell.color] || 0) + 1;
-                }
-              }
-            }
-            const mostCommonGridColor = Object.entries(gridColorCounts).sort((a, b) => b[1] - a[1])[0]?.[0] as Color || centerCell.color;
-
-            boostersToCreate.push({
-              id: `booster-${Date.now()}-${Math.random()}`,
-              type: 'color_ball',
-              x: centerPoint.x,
-              y: centerPoint.y,
-              color: mostCommonGridColor
-            });
-            allClearedPoints = allClearedPoints.filter(p => p.x !== centerPoint.x || p.y !== centerPoint.y);
-          } else if (totalForBooster >= 6 && centerCell) {
-            // Bomb - 6+ blocks (single color): eliminates 1 layer around
-            boostersToCreate.push({
-              id: `booster-${Date.now()}-${Math.random()}`,
-              type: 'bomb',
-              x: centerPoint.x,
-              y: centerPoint.y,
-              color: centerCell.color
-            });
-            allClearedPoints = allClearedPoints.filter(p => p.x !== centerPoint.x || p.y !== centerPoint.y);
-          } else if (totalForBooster === 5 && centerCell) {
-            // Line bomb - 5 blocks: eliminates row + column
-            boostersToCreate.push({
-              id: `booster-${Date.now()}-${Math.random()}`,
-              type: 'line_bomb',
-              x: centerPoint.x,
-              y: centerPoint.y,
-              color: centerCell.color
-            });
-            allClearedPoints = allClearedPoints.filter(p => p.x !== centerPoint.x || p.y !== centerPoint.y);
-          } else if (totalForBooster === 4 && centerCell) {
-            // Rocket - 4 blocks: eliminates one direction (random H or V)
-            const isHorizontal = Math.random() < 0.5;
-            boostersToCreate.push({
-              id: `booster-${Date.now()}-${Math.random()}`,
-              type: isHorizontal ? 'rocket_h' : 'rocket_v',
-              x: centerPoint.x,
-              y: centerPoint.y,
-              color: centerCell.color
-            });
-            allClearedPoints = allClearedPoints.filter(p => p.x !== centerPoint.x || p.y !== centerPoint.y);
-          }
-        }
+        const boosterOutcome = resolveMatchBoosterOutcome(newGrid, allClearedPoints);
+        const boostersToCreate = boosterOutcome.boostersToCreate;
+        allClearedPoints = boosterOutcome.pointsToClear;
 
         const totalCleared = allClearedPoints.length;
 
