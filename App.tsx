@@ -3221,8 +3221,10 @@ const App: React.FC = () => {
 
   return (
     <div
-      className="flex justify-center items-center h-screen w-full select-none overflow-hidden"
+      className="flex justify-center items-center w-full select-none overflow-hidden"
       style={{
+        height: '100dvh',
+        minHeight: '100vh',
         backgroundImage: `url(${backgroundImageSrc})`,
         backgroundSize: 'cover',
         backgroundPosition: 'center',

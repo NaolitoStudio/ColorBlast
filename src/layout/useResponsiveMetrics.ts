@@ -226,10 +226,13 @@ const inferInitialLayoutSize = (): { width: number; height: number } => {
     return { width: 1, height: 1 };
   }
 
+  const vv = window.visualViewport;
+  const viewportWidth = vv?.width ?? window.innerWidth;
+  const viewportHeight = vv?.height ?? window.innerHeight;
   const gameAspect = 9 / 16;
   return {
-    width: Math.min(window.innerWidth, window.innerHeight * gameAspect),
-    height: Math.min(window.innerHeight, window.innerWidth / gameAspect),
+    width: Math.min(viewportWidth, viewportHeight * gameAspect),
+    height: Math.min(viewportHeight, viewportWidth / gameAspect),
   };
 };
 
@@ -271,8 +274,11 @@ export const useResponsiveMetrics = ({
       const layoutNode = layoutRef.current;
       if (!layoutNode) return;
 
-      const layoutWidth = layoutNode.clientWidth;
-      const layoutHeight = layoutNode.clientHeight;
+      const rawWidth = layoutNode.clientWidth;
+      const rawHeight = layoutNode.clientHeight;
+      const vv = window.visualViewport;
+      const layoutWidth = vv ? Math.min(rawWidth, Math.round(vv.width)) : rawWidth;
+      const layoutHeight = vv ? Math.min(rawHeight, Math.round(vv.height)) : rawHeight;
       if (layoutWidth <= 0 || layoutHeight <= 0) return;
 
       const headerHeight = headerRef.current?.offsetHeight ?? 0;
@@ -305,11 +311,13 @@ export const useResponsiveMetrics = ({
     const onResize = () => compute();
     window.addEventListener('resize', onResize);
     window.visualViewport?.addEventListener('resize', onResize);
+    window.visualViewport?.addEventListener('scroll', onResize);
 
     return () => {
       observer.disconnect();
       window.removeEventListener('resize', onResize);
       window.visualViewport?.removeEventListener('resize', onResize);
+      window.visualViewport?.removeEventListener('scroll', onResize);
     };
   }, [
     boardAspect,
