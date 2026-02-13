@@ -82,6 +82,7 @@ const POWERUP_GAP_MULTIPLIER_STEP = 0.01;
 const FRAME_MS_60FPS = 1000 / 60;
 const POST_DESTRUCTION_ALL_CLEAR_DELAY_MS = 650;
 const BOOSTER_WAVE_STEP_MS = 200;
+const CELEBRATION_BOOSTER_STAGGER_MS = 100;
 
 const isWaveBoosterType = (type: BoosterType | undefined): type is 'line_bomb' | 'rocket_h' | 'rocket_v' => (
   type === 'line_bomb' || type === 'rocket_h' || type === 'rocket_v'
@@ -1339,11 +1340,16 @@ export const Game: React.FC = () => {
 
   // Start celebration when level is complete
   useEffect(() => {
-    if (gameState.levelComplete && !celebrating && !showLevelPopup) {
-      // Small delay before starting celebration
-      setTimeout(() => startCelebration(), 500);
-    }
-  }, [gameState.levelComplete]);
+    if (!gameState.levelComplete || celebrating || showLevelPopup) return;
+
+    const timerId = window.setTimeout(() => {
+      startCelebration();
+    }, 500);
+
+    return () => {
+      window.clearTimeout(timerId);
+    };
+  }, [celebrating, gameState.levelComplete, showLevelPopup]);
 
   // Auto-start music on load (fallback to first interaction if blocked)
   const musicStartedRef = useRef(false);
@@ -2074,31 +2080,48 @@ export const Game: React.FC = () => {
     setSuperballAnimations(nextSuperballAnimations);
   }, [destructionRuntime.activeEffects, gameState.grid, gameState.boosters, getDestructionSnapshot]);
 
-  // Chain explosion celebration when level is complete
-  const startCelebration = () => {
-    setCelebrating(true);
-    audio.play('levelComplete');
+  const dispatchCelebrationBoostersStaggered = (boosterIds: string[]) => {
+    boosterIds.forEach((boosterId, index) => {
+      window.setTimeout(() => {
+        const boosterExists = gameStateRef.current.boosters.some((booster) => booster.id === boosterId);
+        if (!boosterExists) return;
 
-    const boosters = [...gameStateRef.current.boosters];
-    if (boosters.length === 0) {
-      explodeRemainingBlocks();
-      return;
-    }
-
-    boosters.forEach((booster, index) => {
-      setTimeout(() => {
         dispatchDestructionRequest({
           kind: 'booster',
           source: 'celebration',
-          boosterId: booster.id
+          boosterId
         });
-      }, index * 120);
+      }, index * CELEBRATION_BOOSTER_STAGGER_MS);
     });
+  };
+
+  // Chain explosion celebration when level is complete
+  const startCelebration = () => {
+    if (celebrating || showLevelPopup) return;
+
+    setCelebrating(true);
+    audio.play('levelComplete');
+
+    const startRemainingBlocksPhase = () => {
+      explodeRemainingBlocks();
+    };
 
     onDestructionEngineIdle(() => {
-      setTimeout(() => {
-        explodeRemainingBlocks();
-      }, 220);
+      const boosterIds = [...gameStateRef.current.boosters]
+        .sort((a, b) => (a.y - b.y) || (a.x - b.x))
+        .map((booster) => booster.id);
+
+      if (boosterIds.length === 0) {
+        startRemainingBlocksPhase();
+        return;
+      }
+
+      dispatchCelebrationBoostersStaggered(boosterIds);
+
+      const waitForAllBoostersDispatchMs = boosterIds.length * CELEBRATION_BOOSTER_STAGGER_MS;
+      window.setTimeout(() => {
+        onDestructionEngineIdle(startRemainingBlocksPhase);
+      }, waitForAllBoostersDispatchMs);
     });
   };
 
@@ -2118,11 +2141,11 @@ export const Game: React.FC = () => {
       const shuffled = blocks.sort(() => Math.random() - 0.5);
 
       if (shuffled.length === 0) {
-        // No blocks left, show popup
+        // No blocks left, show popup after the same calm-down delay used by all-clear.
         setTimeout(() => {
           setCelebrating(false);
           setShowLevelPopup(true);
-        }, 300);
+        }, POST_DESTRUCTION_ALL_CLEAR_DELAY_MS);
         return prev;
       }
 
@@ -2151,7 +2174,7 @@ export const Game: React.FC = () => {
             setTimeout(() => {
               setCelebrating(false);
               setShowLevelPopup(true);
-            }, 300);
+            }, POST_DESTRUCTION_ALL_CLEAR_DELAY_MS);
           }
         }, index * delay);
       });
