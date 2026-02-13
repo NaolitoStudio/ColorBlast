@@ -31,6 +31,7 @@ export type ResponsiveMetrics = {
   powerupTopPadding: number;
   powerupBottomPadding: number;
   reservedBottomSpace: number;
+  viewportHeight: number;
 };
 
 type UseResponsiveMetricsArgs = {
@@ -218,6 +219,7 @@ const createMetrics = ({
     powerupTopPadding,
     powerupBottomPadding,
     reservedBottomSpace,
+    viewportHeight: safeHeight,
   };
 };
 
@@ -272,13 +274,14 @@ export const useResponsiveMetrics = ({
   useEffect(() => {
     const compute = () => {
       const layoutNode = layoutRef.current;
-      if (!layoutNode) return;
-
-      const rawWidth = layoutNode.clientWidth;
-      const rawHeight = layoutNode.clientHeight;
+      // We prioritize the visual viewport, then window inner dimensions.
+      // We only use layoutNode.clientDims as a last resort fallback,
+      // avoiding the feedback loop where setting height on the node locks the measurement.
       const vv = window.visualViewport;
-      const layoutWidth = vv ? Math.min(rawWidth, Math.round(vv.width)) : rawWidth;
-      const layoutHeight = vv ? Math.min(rawHeight, Math.round(vv.height)) : rawHeight;
+      
+      const layoutWidth = vv ? Math.round(vv.width) : (window.innerWidth || layoutNode?.clientWidth || 0);
+      const layoutHeight = vv ? Math.round(vv.height) : (window.innerHeight || layoutNode?.clientHeight || 0);
+
       if (layoutWidth <= 0 || layoutHeight <= 0) return;
 
       const headerHeight = headerRef.current?.offsetHeight ?? 0;

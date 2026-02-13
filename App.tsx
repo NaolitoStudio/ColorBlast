@@ -3236,7 +3236,7 @@ const App: React.FC = () => {
         className="flex flex-col"
         style={{
           width: '100%',
-          height: '100%',
+          height: responsive.viewportHeight ? `${responsive.viewportHeight}px` : '100%',
           maxHeight: '100%',
           maxWidth: '100%',
           paddingLeft: `${responsive.layoutPadding}px`,
