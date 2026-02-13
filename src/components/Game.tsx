@@ -527,6 +527,7 @@ interface Particle {
   vx: number;
   vy: number;
   color: string;
+  shape: 'circle' | 'square' | 'triangle';
   life: number;
   maxLife: number;
   size: number;
@@ -1524,6 +1525,7 @@ export const Game: React.FC = () => {
   const spawnParticles = (x: number, y: number, color: string, count: number, sizeMultiplier: number = 1) => {
     // Convert icon path to actual color for particles
     const particleColor = isIconPath(color) ? getParticleColor(color) : color;
+    const shapes: Array<Particle['shape']> = ['circle', 'square', 'triangle'];
 
     const newParticles: Particle[] = [];
     for (let i = 0; i < count; i++) {
@@ -1536,6 +1538,7 @@ export const Game: React.FC = () => {
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed - 2, // Slight upward bias
         color: particleColor,
+        shape: shapes[Math.floor(Math.random() * shapes.length)],
         life: 40 + Math.random() * 20,
         maxLife: 60,
         size: (Math.random() * 6 + 4) * sizeMultiplier
@@ -4314,7 +4317,8 @@ export const Game: React.FC = () => {
               width: p.size,
               height: p.size,
               backgroundColor: p.color,
-              borderRadius: '4px',
+              borderRadius: p.shape === 'circle' ? '9999px' : '3px',
+              clipPath: p.shape === 'triangle' ? 'polygon(50% 0%, 0% 100%, 100% 100%)' : undefined,
               opacity: Math.max(0, p.life / p.maxLife),
               transform: `translate(-50%, -50%) rotate(${p.life * 10}deg)`,
               willChange: 'transform, opacity'
