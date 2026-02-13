@@ -1363,7 +1363,7 @@ export const Game: React.FC = () => {
     setShowLoadingScreen(true);
 
     const bootstrapAssets = async () => {
-      await preloadAudio(['blocksIncoming', 'boosterWave']);
+      await preloadAudio(['blocksIncoming', 'boosterWave', 'match']);
       await preloadImages([
         backgroundImageSrc,
         loadingLevelTemplateSrc,
@@ -1910,7 +1910,7 @@ export const Game: React.FC = () => {
       const timerId = window.setTimeout(() => {
         if (!activeDestructionEffectsRef.current.has(effect.effectId)) return;
         if (stepPoints.length > 0) {
-          audio.play('boosterWave', 0.28, 0.92);
+          audio.play('boosterWave', 0.25);
         }
 
         const currentState = gameStateRef.current;
@@ -2000,9 +2000,43 @@ export const Game: React.FC = () => {
     }
 
     const commit = computeCommitForEffect(effect, snapshotBefore);
+    const hasRemovedTiles = commit.removeTileIds.length > 0;
 
     if (effect.request.kind === 'booster' && effect.boosterType === 'color_ball') {
       audio.play('superball', 0.25);
+
+      // Superball should burst visually at its own position before disappearing.
+      if (effect.boosterId) {
+        const sourceBooster = snapshotBefore.boosters.find((entry) => entry.id === effect.boosterId);
+        if (sourceBooster) {
+          const metrics = getCellMetrics(sourceBooster.x, sourceBooster.y);
+          if (metrics) {
+            const burstColors = [
+              '#2f6df6', // electric blue
+              '#5b34d9', // deep violet
+              '#e23d8f', // magenta
+              '#ef4444', // red
+              '#f59e0b', // orange
+              '#facc15'  // yellow
+            ];
+            burstColors.forEach((color, index) => {
+              const count = index === 0 ? 14 : 8;
+              spawnParticles(metrics.centerX, metrics.centerY, color, count, 1.2);
+            });
+            spawnExplosionSprite(metrics.centerX, metrics.centerY, '#fde68a', 1.35);
+          }
+        }
+      }
+    }
+
+    // Booster-driven destruction should always include the tile-destroy SFX
+    // when tiles are actually removed.
+    if (hasRemovedTiles) {
+      if (effect.request.kind === 'booster') {
+        audio.play('match');
+      } else if (effect.request.kind === 'direct') {
+        audio.play('match');
+      }
     } else if (effect.request.kind === 'direct') {
       audio.play('match');
     }

@@ -23,7 +23,7 @@ const SOUNDS = {
   // Boosters
   createBooster: '/Assets/Sound/SFX/Ui & Item Sounds - HD Remake/Powerup upgrade 8.wav',
   activateBooster: '/Assets/Sound/SFX/Other/477162__sieuamthanh__beam-8.wav',
-  boosterWave: '/Assets/Sound/SFX/Ui & Item Sounds - HD Remake/Pop sound 15.wav',
+  boosterWave: '/Assets/Sound/SFX/Explosions Sounds - HD Remake/Explosion Tiny 7.wav',
   superballCharge: '/Assets/Sound/SFX/Other/588242__magnuswaker__laser-charge-up.wav',
   superball: '/Assets/Sound/SFX/Other/477162__sieuamthanh__beam-8.wav',
 
@@ -39,6 +39,8 @@ const SOUNDS = {
   // Music
   bgMusic: '/Assets/Sound/Music/MouseTowerCards.mp3',
 } as const;
+
+const MATCH_VOLUME_MULTIPLIER = 1.5;
 
 type SoundName = keyof typeof SOUNDS;
 
@@ -183,7 +185,10 @@ export function useAudio(): AudioManager {
       return;
     }
 
-    const targetVolume = volume ?? sfxVolumeRef.current;
+    const baseVolume = volume ?? sfxVolumeRef.current;
+    const targetVolume = sound === 'match'
+      ? Math.min(1, baseVolume * MATCH_VOLUME_MULTIPLIER)
+      : baseVolume;
 
     // Use clones for consistent overlap behavior across all SFX.
     const clone = base.cloneNode() as HTMLAudioElement;
