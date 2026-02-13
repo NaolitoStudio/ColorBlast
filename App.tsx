@@ -1828,6 +1828,82 @@ const App: React.FC = () => {
   };
 
   // Execute trash - refresh all 3 pieces with shake + explode animation
+  const canPieceFitWithBoosters = (
+    grid: GameState['grid'],
+    piece: PieceData,
+    boosters: Booster[]
+  ): boolean => {
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        if (canPlacePiece(grid, piece, x, y, boosters)) return true;
+      }
+    }
+    return false;
+  };
+
+  const canPieceCreateMatchWithBoosters = (
+    grid: GameState['grid'],
+    piece: PieceData,
+    boosters: Booster[]
+  ): boolean => {
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        if (!canPlacePiece(grid, piece, x, y, boosters)) continue;
+
+        const testGrid = grid.map(row => [...row]);
+        const placedKeys = new Set<string>();
+        piece.shape.forEach((point, index) => {
+          const tx = x + point.x;
+          const ty = y + point.y;
+          placedKeys.add(`${tx},${ty}`);
+          testGrid[ty][tx] = {
+            color: piece.colors[index],
+            id: `trash-test-${index}`
+          };
+        });
+
+        const groups = findMatchGroups(testGrid);
+        const createsOwnMatch = groups.some(group =>
+          group.some(point => placedKeys.has(`${point.x},${point.y}`))
+        );
+        if (createsOwnMatch) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  const generateTrashMatchReadyHand = (
+    grid: GameState['grid'],
+    level: number,
+    boosters: Booster[]
+  ): PieceData[] => {
+    const hand: PieceData[] = [];
+    let attempts = 0;
+    const maxAttempts = 520;
+
+    while (hand.length < 3 && attempts < maxAttempts) {
+      const candidate = generatePiece(grid, level);
+      if (canPieceCreateMatchWithBoosters(grid, candidate, boosters)) {
+        hand.push(candidate);
+      }
+      attempts++;
+    }
+
+    // Fallback only if current board state makes strict generation infeasible.
+    while (hand.length < 3) {
+      const fallback = generatePiece(grid, level);
+      if (canPieceFitWithBoosters(grid, fallback, boosters)) {
+        hand.push(fallback);
+      } else {
+        break;
+      }
+    }
+
+    return hand.length === 3 ? hand : generateValidHand(grid, level);
+  };
+
   const executeTrash = () => {
     // Start shake animation for all pieces
     setTrashingAllPieces(true);
@@ -1859,7 +1935,7 @@ const App: React.FC = () => {
       // Replace all pieces with new hand
       setGameState(prev => ({
         ...prev,
-        hand: generateValidHand(prev.grid, prev.level),
+        hand: generateTrashMatchReadyHand(prev.grid, prev.level, prev.boosters),
         selectedPieceIndex: null
       }));
     }, 800); // Shake for 800ms then explode
