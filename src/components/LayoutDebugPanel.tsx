@@ -7,6 +7,24 @@ type LayoutDebugPanelProps = {
   minAspect?: number;
   maxAspect?: number;
   spacerAspect: number;
+  minHeaderAspectRatio?: number;
+  maxHeaderAspectRatio?: number;
+  headerAspectRatioStep?: number;
+  headerAspectRatio: number;
+  minSubheaderAspectRatio?: number;
+  maxSubheaderAspectRatio?: number;
+  subheaderAspectRatioStep?: number;
+  subheaderAspectRatio: number;
+  subheaderActive: boolean;
+  minSubheaderPaddingOffset?: number;
+  maxSubheaderPaddingOffset?: number;
+  subheaderPaddingOffsetStep?: number;
+  subheaderPaddingOffset: number;
+  minSubheaderContainerOpacity?: number;
+  maxSubheaderContainerOpacity?: number;
+  subheaderContainerOpacityStep?: number;
+  subheaderContainerOpacity: number;
+  subheaderShowContent: boolean;
   minScaleMultiplier?: number;
   maxScaleMultiplier?: number;
   scaleMultiplierStep?: number;
@@ -30,6 +48,12 @@ type LayoutDebugPanelProps = {
   copyStatus: LayoutDebugCopyStatus;
   debugText: string;
   onChangeSpacerAspect: (value: number) => void;
+  onChangeHeaderAspectRatio: (value: number) => void;
+  onChangeSubheaderAspectRatio: (value: number) => void;
+  onChangeSubheaderActive: (value: boolean) => void;
+  onChangeSubheaderPaddingOffset: (value: number) => void;
+  onChangeSubheaderContainerOpacity: (value: number) => void;
+  onChangeSubheaderShowContent: (value: boolean) => void;
   onChangeNineSliceScaleMultiplier: (value: number) => void;
   onChangeBoardPaddingMultiplier: (value: number) => void;
   onChangePowerupSizeMultiplier: (value: number) => void;
@@ -45,6 +69,24 @@ export const LayoutDebugPanel: React.FC<LayoutDebugPanelProps> = ({
   minAspect = 8,
   maxAspect = 80,
   spacerAspect,
+  minHeaderAspectRatio = 3,
+  maxHeaderAspectRatio = 7,
+  headerAspectRatioStep = 0.05,
+  headerAspectRatio,
+  minSubheaderAspectRatio = 4,
+  maxSubheaderAspectRatio = 20,
+  subheaderAspectRatioStep = 0.1,
+  subheaderAspectRatio,
+  subheaderActive,
+  minSubheaderPaddingOffset = -20,
+  maxSubheaderPaddingOffset = 20,
+  subheaderPaddingOffsetStep = 1,
+  subheaderPaddingOffset,
+  minSubheaderContainerOpacity = 0,
+  maxSubheaderContainerOpacity = 1,
+  subheaderContainerOpacityStep = 0.01,
+  subheaderContainerOpacity,
+  subheaderShowContent,
   minScaleMultiplier = 0.6,
   maxScaleMultiplier = 3,
   scaleMultiplierStep = 0.01,
@@ -68,6 +110,12 @@ export const LayoutDebugPanel: React.FC<LayoutDebugPanelProps> = ({
   copyStatus,
   debugText,
   onChangeSpacerAspect,
+  onChangeHeaderAspectRatio,
+  onChangeSubheaderAspectRatio,
+  onChangeSubheaderActive,
+  onChangeSubheaderPaddingOffset,
+  onChangeSubheaderContainerOpacity,
+  onChangeSubheaderShowContent,
   onChangeNineSliceScaleMultiplier,
   onChangeBoardPaddingMultiplier,
   onChangePowerupSizeMultiplier,
@@ -170,6 +218,138 @@ export const LayoutDebugPanel: React.FC<LayoutDebugPanelProps> = ({
             />
           </div>
         </div>
+
+        <details className="rounded-md border border-slate-700 bg-slate-900/40">
+          <summary className="cursor-pointer select-none px-2 py-1.5 text-[11px] font-semibold text-slate-200">
+            Header
+          </summary>
+          <div className="space-y-2 px-2 pb-2 pt-1">
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold text-slate-300">
+                Header Aspect Ratio (W/H)
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min={minHeaderAspectRatio}
+                  max={maxHeaderAspectRatio}
+                  step={headerAspectRatioStep}
+                  value={headerAspectRatio}
+                  onChange={(event) => onChangeHeaderAspectRatio(Number(event.target.value))}
+                  className="w-full"
+                />
+                <input
+                  type="number"
+                  min={minHeaderAspectRatio}
+                  max={maxHeaderAspectRatio}
+                  step={headerAspectRatioStep}
+                  value={headerAspectRatio}
+                  onChange={(event) => onChangeHeaderAspectRatio(Number(event.target.value))}
+                  className="w-16 rounded-md border border-slate-500 bg-slate-900 px-1.5 py-1 text-right text-xs"
+                />
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <details className="rounded-md border border-slate-700 bg-slate-900/40">
+          <summary className="cursor-pointer select-none px-2 py-1.5 text-[11px] font-semibold text-slate-200">
+            Subheader
+          </summary>
+          <div className="space-y-2 px-2 pb-2 pt-1">
+            <label className="flex items-center gap-2 text-[11px] font-semibold text-slate-300">
+              <input
+                type="checkbox"
+                checked={subheaderActive}
+                onChange={(event) => onChangeSubheaderActive(event.target.checked)}
+              />
+              Active
+            </label>
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold text-slate-300">
+                Subheader Aspect Ratio (W/H)
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min={minSubheaderAspectRatio}
+                  max={maxSubheaderAspectRatio}
+                  step={subheaderAspectRatioStep}
+                  value={subheaderAspectRatio}
+                  onChange={(event) => onChangeSubheaderAspectRatio(Number(event.target.value))}
+                  className="w-full"
+                />
+                <input
+                  type="number"
+                  min={minSubheaderAspectRatio}
+                  max={maxSubheaderAspectRatio}
+                  step={subheaderAspectRatioStep}
+                  value={subheaderAspectRatio}
+                  onChange={(event) => onChangeSubheaderAspectRatio(Number(event.target.value))}
+                  className="w-16 rounded-md border border-slate-500 bg-slate-900 px-1.5 py-1 text-right text-xs"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold text-slate-300">
+                Padding Offset
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min={minSubheaderPaddingOffset}
+                  max={maxSubheaderPaddingOffset}
+                  step={subheaderPaddingOffsetStep}
+                  value={subheaderPaddingOffset}
+                  onChange={(event) => onChangeSubheaderPaddingOffset(Number(event.target.value))}
+                  className="w-full"
+                />
+                <input
+                  type="number"
+                  min={minSubheaderPaddingOffset}
+                  max={maxSubheaderPaddingOffset}
+                  step={subheaderPaddingOffsetStep}
+                  value={subheaderPaddingOffset}
+                  onChange={(event) => onChangeSubheaderPaddingOffset(Number(event.target.value))}
+                  className="w-16 rounded-md border border-slate-500 bg-slate-900 px-1.5 py-1 text-right text-xs"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold text-slate-300">
+                Container Opacity
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min={minSubheaderContainerOpacity}
+                  max={maxSubheaderContainerOpacity}
+                  step={subheaderContainerOpacityStep}
+                  value={subheaderContainerOpacity}
+                  onChange={(event) => onChangeSubheaderContainerOpacity(Number(event.target.value))}
+                  className="w-full"
+                />
+                <input
+                  type="number"
+                  min={minSubheaderContainerOpacity}
+                  max={maxSubheaderContainerOpacity}
+                  step={subheaderContainerOpacityStep}
+                  value={subheaderContainerOpacity}
+                  onChange={(event) => onChangeSubheaderContainerOpacity(Number(event.target.value))}
+                  className="w-16 rounded-md border border-slate-500 bg-slate-900 px-1.5 py-1 text-right text-xs"
+                />
+              </div>
+            </div>
+            <label className="flex items-center gap-2 text-[11px] font-semibold text-slate-300">
+              <input
+                type="checkbox"
+                checked={subheaderShowContent}
+                onChange={(event) => onChangeSubheaderShowContent(event.target.checked)}
+              />
+              Visible Content
+            </label>
+          </div>
+        </details>
 
         <details className="rounded-md border border-slate-700 bg-slate-900/40">
           <summary className="cursor-pointer select-none px-2 py-1.5 text-[11px] font-semibold text-slate-200">

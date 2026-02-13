@@ -79,6 +79,18 @@ const POWERUP_BUBBLE_SIZE_MULTIPLIER_STEP = 0.01;
 const POWERUP_GAP_MULTIPLIER_MIN = 0.5;
 const POWERUP_GAP_MULTIPLIER_MAX = 2;
 const POWERUP_GAP_MULTIPLIER_STEP = 0.01;
+const HEADER_ASPECT_RATIO_MIN = 3;
+const HEADER_ASPECT_RATIO_MAX = 7;
+const HEADER_ASPECT_RATIO_STEP = 0.05;
+const SUBHEADER_ASPECT_RATIO_MIN = 4;
+const SUBHEADER_ASPECT_RATIO_MAX = 20;
+const SUBHEADER_ASPECT_RATIO_STEP = 0.1;
+const SUBHEADER_PADDING_OFFSET_MIN = -20;
+const SUBHEADER_PADDING_OFFSET_MAX = 20;
+const SUBHEADER_PADDING_OFFSET_STEP = 1;
+const SUBHEADER_CONTAINER_OPACITY_MIN = 0;
+const SUBHEADER_CONTAINER_OPACITY_MAX = 1;
+const SUBHEADER_CONTAINER_OPACITY_STEP = 0.01;
 const FRAME_MS_60FPS = 1000 / 60;
 const POST_DESTRUCTION_ALL_CLEAR_DELAY_MS = 650;
 const BOOSTER_WAVE_STEP_MS = 200;
@@ -120,6 +132,12 @@ const buildBoosterWaveSteps = (booster: Booster): Point[][] => {
 
 type LayoutDebugOverrides = {
   spacerAspect: number;
+  headerAspectRatio: number;
+  subheaderAspectRatio: number;
+  subheaderActive: boolean;
+  subheaderPaddingOffset: number;
+  subheaderContainerOpacity: number;
+  subheaderShowContent: boolean;
   nineSliceScaleMultiplier: number;
   boardPaddingMultiplier: number;
   powerupSizeMultiplier: number;
@@ -129,6 +147,12 @@ type LayoutDebugOverrides = {
 
 const DEFAULT_LAYOUT_DEBUG_OVERRIDES: LayoutDebugOverrides = {
   spacerAspect: 75,
+  headerAspectRatio: 5,
+  subheaderAspectRatio: 8.5,
+  subheaderActive: true,
+  subheaderPaddingOffset: 0,
+  subheaderContainerOpacity: 0,
+  subheaderShowContent: true,
   nineSliceScaleMultiplier: 1,
   boardPaddingMultiplier: 0.7,
   powerupSizeMultiplier: 1,
@@ -194,11 +218,53 @@ const sanitizePowerupGapMultiplier = (value: number): number => {
   return Math.round(clamped * 100) / 100;
 };
 
+const sanitizeHeaderAspectRatio = (value: number): number => {
+  if (!Number.isFinite(value)) return DEFAULT_LAYOUT_DEBUG_OVERRIDES.headerAspectRatio;
+  const clamped = Math.max(
+    HEADER_ASPECT_RATIO_MIN,
+    Math.min(HEADER_ASPECT_RATIO_MAX, value)
+  );
+  return Math.round(clamped * 100) / 100;
+};
+
+const sanitizeSubheaderAspectRatio = (value: number): number => {
+  if (!Number.isFinite(value)) return DEFAULT_LAYOUT_DEBUG_OVERRIDES.subheaderAspectRatio;
+  const clamped = Math.max(
+    SUBHEADER_ASPECT_RATIO_MIN,
+    Math.min(SUBHEADER_ASPECT_RATIO_MAX, value)
+  );
+  return Math.round(clamped * 100) / 100;
+};
+
+const sanitizeSubheaderPaddingOffset = (value: number): number => {
+  if (!Number.isFinite(value)) return DEFAULT_LAYOUT_DEBUG_OVERRIDES.subheaderPaddingOffset;
+  const clamped = Math.max(
+    SUBHEADER_PADDING_OFFSET_MIN,
+    Math.min(SUBHEADER_PADDING_OFFSET_MAX, value)
+  );
+  return Math.round(clamped);
+};
+
+const sanitizeSubheaderContainerOpacity = (value: number): number => {
+  if (!Number.isFinite(value)) return DEFAULT_LAYOUT_DEBUG_OVERRIDES.subheaderContainerOpacity;
+  const clamped = Math.max(
+    SUBHEADER_CONTAINER_OPACITY_MIN,
+    Math.min(SUBHEADER_CONTAINER_OPACITY_MAX, value)
+  );
+  return Math.round(clamped * 100) / 100;
+};
+
 const sanitizeLayoutDebugOverrides = (
   value: Partial<LayoutDebugOverrides> | null | undefined
 ): LayoutDebugOverrides | null => {
   if (!value) return null;
   const spacerAspect = value.spacerAspect;
+  const headerAspectRatio = value.headerAspectRatio;
+  const subheaderAspectRatio = value.subheaderAspectRatio;
+  const subheaderActive = value.subheaderActive;
+  const subheaderPaddingOffset = value.subheaderPaddingOffset;
+  const subheaderContainerOpacity = value.subheaderContainerOpacity;
+  const subheaderShowContent = value.subheaderShowContent;
   const nineSliceScaleMultiplier = value.nineSliceScaleMultiplier;
   const boardPaddingMultiplier = value.boardPaddingMultiplier;
   const powerupSizeMultiplier = value.powerupSizeMultiplier;
@@ -207,6 +273,32 @@ const sanitizeLayoutDebugOverrides = (
   if (typeof spacerAspect !== 'number' || typeof nineSliceScaleMultiplier !== 'number') return null;
   return {
     spacerAspect: sanitizeLayoutAspect(spacerAspect),
+    headerAspectRatio: sanitizeHeaderAspectRatio(
+      typeof headerAspectRatio === 'number'
+        ? headerAspectRatio
+        : DEFAULT_LAYOUT_DEBUG_OVERRIDES.headerAspectRatio
+    ),
+    subheaderAspectRatio: sanitizeSubheaderAspectRatio(
+      typeof subheaderAspectRatio === 'number'
+        ? subheaderAspectRatio
+        : DEFAULT_LAYOUT_DEBUG_OVERRIDES.subheaderAspectRatio
+    ),
+    subheaderActive: typeof subheaderActive === 'boolean'
+      ? subheaderActive
+      : DEFAULT_LAYOUT_DEBUG_OVERRIDES.subheaderActive,
+    subheaderPaddingOffset: sanitizeSubheaderPaddingOffset(
+      typeof subheaderPaddingOffset === 'number'
+        ? subheaderPaddingOffset
+        : DEFAULT_LAYOUT_DEBUG_OVERRIDES.subheaderPaddingOffset
+    ),
+    subheaderContainerOpacity: sanitizeSubheaderContainerOpacity(
+      typeof subheaderContainerOpacity === 'number'
+        ? subheaderContainerOpacity
+        : DEFAULT_LAYOUT_DEBUG_OVERRIDES.subheaderContainerOpacity
+    ),
+    subheaderShowContent: typeof subheaderShowContent === 'boolean'
+      ? subheaderShowContent
+      : DEFAULT_LAYOUT_DEBUG_OVERRIDES.subheaderShowContent,
     nineSliceScaleMultiplier: sanitizeNineSliceScaleMultiplier(nineSliceScaleMultiplier),
     boardPaddingMultiplier: sanitizeBoardPaddingMultiplier(
       typeof boardPaddingMultiplier === 'number'
@@ -1121,6 +1213,20 @@ export const Game: React.FC = () => {
     spacerAspect: sanitizeLayoutAspect(
       layoutDebugOverrides?.spacerAspect ?? layoutThemeConfig.layoutDebugSpacerAspect
     ),
+    headerAspectRatio: sanitizeHeaderAspectRatio(
+      layoutDebugOverrides?.headerAspectRatio ?? DEFAULT_LAYOUT_DEBUG_OVERRIDES.headerAspectRatio
+    ),
+    subheaderAspectRatio: sanitizeSubheaderAspectRatio(
+      layoutDebugOverrides?.subheaderAspectRatio ?? DEFAULT_LAYOUT_DEBUG_OVERRIDES.subheaderAspectRatio
+    ),
+    subheaderActive: layoutDebugOverrides?.subheaderActive ?? DEFAULT_LAYOUT_DEBUG_OVERRIDES.subheaderActive,
+    subheaderPaddingOffset: sanitizeSubheaderPaddingOffset(
+      layoutDebugOverrides?.subheaderPaddingOffset ?? DEFAULT_LAYOUT_DEBUG_OVERRIDES.subheaderPaddingOffset
+    ),
+    subheaderContainerOpacity: sanitizeSubheaderContainerOpacity(
+      layoutDebugOverrides?.subheaderContainerOpacity ?? DEFAULT_LAYOUT_DEBUG_OVERRIDES.subheaderContainerOpacity
+    ),
+    subheaderShowContent: layoutDebugOverrides?.subheaderShowContent ?? DEFAULT_LAYOUT_DEBUG_OVERRIDES.subheaderShowContent,
     nineSliceScaleMultiplier: sanitizeNineSliceScaleMultiplier(
       layoutDebugOverrides?.nineSliceScaleMultiplier ?? layoutThemeConfig.layoutDebugNineSliceScaleMultiplier
     ),
@@ -1185,8 +1291,13 @@ export const Game: React.FC = () => {
 
   const headerPanelConfig = useMemo(() => ({
     ...boardPanelConfig,
-    aspectRatio: 5 / 1.5,
-  }), [boardPanelConfig]);
+    aspectRatio: appliedLayoutDebugOverrides.headerAspectRatio,
+  }), [appliedLayoutDebugOverrides.headerAspectRatio, boardPanelConfig]);
+
+  const subheaderPanelConfig = useMemo(() => ({
+    ...boardPanelConfig,
+    aspectRatio: appliedLayoutDebugOverrides.subheaderAspectRatio,
+  }), [appliedLayoutDebugOverrides.subheaderAspectRatio, boardPanelConfig]);
 
   const boardAspect = boardPanelConfig.aspectRatio ?? 1;
   const rackAspect = rackPanelConfig.aspectRatio ?? (3 / 2);
@@ -1249,7 +1360,9 @@ export const Game: React.FC = () => {
     headerRef: headerCardRef,
     powerupCount: 4,
     minTouchTarget: 44,
-    headerAspect: headerPanelConfig.aspectRatio ?? (5 / 1.5),
+    headerAspect: headerPanelConfig.aspectRatio ?? DEFAULT_LAYOUT_DEBUG_OVERRIDES.headerAspectRatio,
+    subheaderActive: appliedLayoutDebugOverrides.subheaderActive,
+    subheaderAspect: subheaderPanelConfig.aspectRatio ?? DEFAULT_LAYOUT_DEBUG_OVERRIDES.subheaderAspectRatio,
     boardAspect,
     rackAspect,
     spacerHeaderBoardAspect: effectiveSpacerHeaderBoardAspect,
@@ -3883,23 +3996,64 @@ export const Game: React.FC = () => {
   };
 
   const isEndGameModalVisible = showLevelPopup || (gameState.gameOver && !gameState.levelComplete);
+  const clampHeaderValue = (value: number, min: number, max: number) => (
+    Math.max(min, Math.min(max, value))
+  );
   const headerPanelWidthPx = Math.max(1, responsive.boardPanelWidthPx);
+  const headerAspectRatio = Math.max(
+    0.0001,
+    headerPanelConfig.aspectRatio ?? DEFAULT_LAYOUT_DEBUG_OVERRIDES.headerAspectRatio
+  );
+  const headerPanelHeightPx = headerPanelWidthPx / headerAspectRatio;
   const uiUnit = Math.max(1, responsive.boardCellSize);
-  const headerPanelPaddingY = Math.max(6, uiUnit * 0.34);
-  const headerPanelPaddingX = Math.max(10, uiUnit * 0.68);
-  const headerBadgeFontSize = Math.max(12, uiUnit * 0.53);
-  const headerBadgePadX = Math.max(9, uiUnit * 0.44);
-  const headerBadgePadY = Math.max(5, uiUnit * 0.2);
-  const headerMovesValueSize = Math.max(18, uiUnit * 0.82);
-  const headerMovesLabelSize = Math.max(8, uiUnit * 0.28);
-  const headerAudioButtonSize = Math.max(30, uiUnit * 0.78);
-  const headerAudioIconSize = Math.max(14, uiUnit * 0.34);
-  const headerTopRowGap = Math.max(6, uiUnit * 0.24);
-  const objectiveIconSize = Math.max(15, uiUnit * 0.52);
+  const headerPanelPaddingY = clampHeaderValue(headerPanelHeightPx * 0.16, 3, 18);
+  const headerPanelPaddingX = clampHeaderValue(headerPanelWidthPx * 0.035, 8, 28);
+  const headerBadgeFontSize = clampHeaderValue(headerPanelHeightPx * 0.3, 10, 24);
+  const headerBadgePadX = clampHeaderValue(headerPanelHeightPx * 0.2, 7, 18);
+  const headerBadgePadY = clampHeaderValue(headerPanelHeightPx * 0.1, 3, 8);
+  const headerMovesValueSize = clampHeaderValue(headerPanelHeightPx * 0.38, 14, 36);
+  const headerMovesLabelSize = clampHeaderValue(headerPanelHeightPx * 0.14, 7, 13);
+  const headerAudioButtonSize = clampHeaderValue(headerPanelHeightPx * 0.46, 24, 46);
+  const headerAudioIconSize = clampHeaderValue(headerAudioButtonSize * 0.44, 11, 20);
+  const subheaderActive = appliedLayoutDebugOverrides.subheaderActive;
+  const subheaderPaddingOffset = appliedLayoutDebugOverrides.subheaderPaddingOffset;
+  const subheaderContainerOpacity = appliedLayoutDebugOverrides.subheaderContainerOpacity;
+  const subheaderShowContent = appliedLayoutDebugOverrides.subheaderShowContent;
+  const subheaderAspectRatio = Math.max(
+    0.0001,
+    subheaderPanelConfig.aspectRatio ?? DEFAULT_LAYOUT_DEBUG_OVERRIDES.subheaderAspectRatio
+  );
+  const subheaderPanelWidthPx = headerPanelWidthPx;
+  const subheaderPanelHeightPx = subheaderPanelWidthPx / subheaderAspectRatio;
+  const globalPaddingOffset = (
+    (appliedLayoutDebugOverrides.boardPaddingMultiplier - DEFAULT_LAYOUT_DEBUG_OVERRIDES.boardPaddingMultiplier) * 10
+  );
+  const combinedSubheaderPaddingOffset = Math.min(0, globalPaddingOffset + subheaderPaddingOffset);
+  const subheaderPanelPaddingY = clampHeaderValue(
+    (subheaderPanelHeightPx * 0.18) + combinedSubheaderPaddingOffset,
+    0,
+    14
+  );
+  const subheaderPanelPaddingX = clampHeaderValue(
+    (subheaderPanelWidthPx * 0.03) + combinedSubheaderPaddingOffset,
+    0,
+    20
+  );
+  const subheaderContentHeightPx = Math.max(1, subheaderPanelHeightPx - (subheaderPanelPaddingY * 2));
+  const objectiveCount = Math.max(1, Math.min(2, gameState.objectives.length));
+  const objectiveRowGap = clampHeaderValue(subheaderPanelWidthPx * 0.02, 4, 20);
+  const objectiveIconSize = clampHeaderValue(subheaderContentHeightPx * 0.72, 10, 34);
   const objectiveBarHeight = objectiveIconSize;
-  const objectiveBarWidth = Math.max(72, Math.min(headerPanelWidthPx * 0.26, uiUnit * 2.8));
-  const objectiveRowGap = Math.max(8, uiUnit * 0.4);
-  const objectiveGroupGap = Math.max(6, uiUnit * 0.24);
+  const objectiveGroupGap = clampHeaderValue(subheaderContentHeightPx * 0.2, 4, 12);
+  const objectiveAvailableWidthPerItem = Math.max(
+    1,
+    (subheaderPanelWidthPx - (objectiveRowGap * Math.max(0, objectiveCount - 1))) / objectiveCount
+  );
+  const objectiveBarWidth = clampHeaderValue(
+    objectiveAvailableWidthPerItem - objectiveIconSize - objectiveGroupGap,
+    40,
+    subheaderPanelWidthPx * 0.34
+  );
   const powerupButtonCount = 4;
   const effectivePowerupButtonSize = responsive.powerupButtonSize * powerupSizeMultiplier;
   const effectivePowerupGap = responsive.powerupGap * powerupGapMultiplier;
@@ -3914,9 +4068,75 @@ export const Game: React.FC = () => {
   const objectiveTrackColor = isIconPath(objectiveTrackSource)
     ? getParticleColor(objectiveTrackSource)
     : objectiveTrackSource;
+  const objectiveCounterTextColor = '#1f3e78';
+  const headerBottomGap = subheaderActive
+    ? Math.max(4, responsive.layoutGap * 0.24)
+    : responsive.layoutGap;
   const headerVolumeBg = toRgba(objectiveTrackColor, 0.32);
   const headerVolumeBorder = toRgba(objectiveTrackColor, 0.45);
   const headerVolumeIconColor = musicEnabled ? 'rgba(255, 255, 255, 0.92)' : 'rgba(226, 232, 240, 0.62)';
+  const objectiveProgressContent = (
+    <div className="w-full h-full flex items-center justify-center">
+      <div className="flex justify-center w-full" style={{ gap: `${objectiveRowGap}px` }}>
+      {gameState.objectives.slice(0, 2).map((obj, i) => {
+        const progress = Math.min(100, (obj.current / obj.target) * 100);
+        const isComplete = obj.current >= obj.target;
+        const barColor = isIconPath(obj.color) ? getParticleColor(obj.color) : obj.color;
+
+        return (
+          <div key={i} className="flex-1 flex justify-center">
+            <div className="flex items-center justify-center" style={{ gap: `${objectiveGroupGap}px` }}>
+              {isIconPath(obj.color) ? (
+                <img
+                  src={obj.color}
+                  alt=""
+                  style={{ width: `${objectiveIconSize}px`, height: `${objectiveIconSize}px` }}
+                />
+              ) : (
+                <div
+                  className="rounded-md shadow-inner"
+                  style={{
+                    width: `${objectiveIconSize}px`,
+                    height: `${objectiveIconSize}px`,
+                    backgroundColor: obj.color
+                  }}
+                />
+              )}
+              <div
+                className="relative overflow-hidden rounded-full"
+                style={{
+                  width: `${objectiveBarWidth}px`,
+                  height: `${objectiveBarHeight}px`,
+                  backgroundColor: toRgba(objectiveTrackColor, 0.32),
+                  boxShadow: `inset 0 0 0 1px ${toRgba(objectiveTrackColor, 0.45)}`
+                }}
+              >
+                <div
+                  className="h-full transition-all duration-300"
+                  style={{
+                    width: `${progress}%`,
+                    backgroundColor: isComplete ? '#22c55e' : barColor
+                  }}
+                />
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <span
+                    className="font-bold leading-none"
+                    style={{
+                      fontSize: `${clampHeaderValue(objectiveIconSize * 0.58, 9, 18)}px`,
+                      color: objectiveCounterTextColor
+                    }}
+                  >
+                    {obj.current}/{obj.target}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+      </div>
+    </div>
+  );
   const layoutDebugSnapshot = useMemo(() => ({
     theme: theme.themeName,
     overrides: appliedLayoutDebugOverrides,
@@ -4352,121 +4572,101 @@ export const Game: React.FC = () => {
         widthPercent={responsive.boardWidthPercent}
         className="relative overflow-hidden"
         style={{
-          marginBottom: `${responsive.layoutGap}px`,
+          marginBottom: `${headerBottomGap}px`,
           padding: `${headerPanelPaddingY}px ${headerPanelPaddingX}px`
         }}
       >
         {/* Top row: Level left, Moves centered to panel width, Audio right */}
-        <div
-          className="grid grid-cols-[1fr_auto_1fr] items-center"
-          style={{ marginBottom: `${headerTopRowGap}px` }}
-        >
+        <div className="h-full flex items-center">
           <div
-            className={`justify-self-start font-black rounded-xl ${gameState.level <= 1 ? 'bg-blue-500/20 text-blue-400' : gameState.level === 2 ? 'bg-green-500/20 text-green-400' : 'bg-purple-500/20 text-purple-400'}`}
-            style={{
-              fontSize: `${headerBadgeFontSize}px`,
-              paddingLeft: `${headerBadgePadX}px`,
-              paddingRight: `${headerBadgePadX}px`,
-              paddingTop: `${headerBadgePadY}px`,
-              paddingBottom: `${headerBadgePadY}px`,
-              lineHeight: 1
-            }}
+            className="w-full grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center"
           >
-            Level {gameState.level}
-          </div>
-          <div className="flex flex-col items-center justify-self-center">
-            <span
-              className={`font-black ${gameState.moves <= 5 ? 'text-red-400' : 'text-white'}`}
-              style={{ fontSize: `${headerMovesValueSize}px`, lineHeight: 1 }}
+            <div
+              className={`justify-self-start font-black rounded-xl ${gameState.level <= 1 ? 'bg-blue-500/20 text-blue-400' : gameState.level === 2 ? 'bg-green-500/20 text-green-400' : 'bg-purple-500/20 text-purple-400'}`}
+              style={{
+                fontSize: `${headerBadgeFontSize}px`,
+                paddingLeft: `${headerBadgePadX}px`,
+                paddingRight: `${headerBadgePadX}px`,
+                paddingTop: `${headerBadgePadY}px`,
+                paddingBottom: `${headerBadgePadY}px`,
+                lineHeight: 1
+              }}
             >
-              {gameState.moves}
-            </span>
-            <span
-              className="text-slate-500 uppercase font-bold"
-              style={{ fontSize: `${headerMovesLabelSize}px`, lineHeight: 1.05 }}
+              Level {gameState.level}
+            </div>
+            <div className="flex flex-col items-center justify-self-center">
+              <span
+                className={`font-black ${gameState.moves <= 5 ? 'text-red-400' : 'text-white'}`}
+                style={{ fontSize: `${headerMovesValueSize}px`, lineHeight: 1 }}
+              >
+                {gameState.moves}
+              </span>
+              <span
+                className="text-slate-500 uppercase font-bold"
+                style={{ fontSize: `${headerMovesLabelSize}px`, lineHeight: 1.05 }}
+              >
+                Moves
+              </span>
+            </div>
+            {/* Music Toggle Button */}
+            <button
+              onClick={toggleMusic}
+              className={`
+                justify-self-end
+                rounded-full flex items-center justify-center
+                transition-all duration-200 active:scale-95
+              `}
+              style={{
+                width: `${headerAudioButtonSize}px`,
+                height: `${headerAudioButtonSize}px`,
+                backgroundColor: headerVolumeBg,
+                boxShadow: `inset 0 0 0 1px ${headerVolumeBorder}`
+              }}
             >
-              Moves
-            </span>
+              <i
+                className={`fa-solid ${musicEnabled ? 'fa-volume-high' : 'fa-volume-xmark'}`}
+                style={{ fontSize: `${headerAudioIconSize}px`, color: headerVolumeIconColor }}
+              ></i>
+            </button>
           </div>
-          {/* Music Toggle Button */}
-          <button
-            onClick={toggleMusic}
-            className={`
-              justify-self-end
-              rounded-full flex items-center justify-center
-              transition-all duration-200 active:scale-95
-            `}
-            style={{
-              width: `${headerAudioButtonSize}px`,
-              height: `${headerAudioButtonSize}px`,
-              backgroundColor: headerVolumeBg,
-              boxShadow: `inset 0 0 0 1px ${headerVolumeBorder}`
-            }}
-          >
-            <i
-              className={`fa-solid ${musicEnabled ? 'fa-volume-high' : 'fa-volume-xmark'}`}
-              style={{ fontSize: `${headerAudioIconSize}px`, color: headerVolumeIconColor }}
-            ></i>
-          </button>
-        </div>
-
-        {/* Objectives - only show first 2 */}
-        <div className="flex justify-center" style={{ gap: `${objectiveRowGap}px` }}>
-          {gameState.objectives.slice(0, 2).map((obj, i) => {
-            const progress = Math.min(100, (obj.current / obj.target) * 100);
-            const isComplete = obj.current >= obj.target;
-            const barColor = isIconPath(obj.color) ? getParticleColor(obj.color) : obj.color;
-
-            return (
-              <div key={i} className="flex-1 flex justify-center">
-                <div className="flex items-center justify-center" style={{ gap: `${objectiveGroupGap}px` }}>
-                  {isIconPath(obj.color) ? (
-                    <img
-                      src={obj.color}
-                      alt=""
-                      style={{ width: `${objectiveIconSize}px`, height: `${objectiveIconSize}px` }}
-                    />
-                  ) : (
-                    <div
-                      className="rounded-md shadow-inner"
-                      style={{
-                        width: `${objectiveIconSize}px`,
-                        height: `${objectiveIconSize}px`,
-                        backgroundColor: obj.color
-                      }}
-                    />
-                  )}
-                  <div
-                    className="relative overflow-hidden rounded-full"
-                    style={{
-                      width: `${objectiveBarWidth}px`,
-                      height: `${objectiveBarHeight}px`,
-                      backgroundColor: toRgba(objectiveTrackColor, 0.32),
-                      boxShadow: `inset 0 0 0 1px ${toRgba(objectiveTrackColor, 0.45)}`
-                    }}
-                  >
-                    <div
-                      className="h-full transition-all duration-300"
-                      style={{
-                        width: `${progress}%`,
-                        backgroundColor: isComplete ? '#22c55e' : barColor
-                      }}
-                    />
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                      <span
-                        className={`font-bold leading-none ${isComplete ? 'text-green-100' : 'text-white'}`}
-                        style={{ fontSize: `${Math.max(11, Math.round(objectiveIconSize * 0.58))}px` }}
-                      >
-                        {obj.current}/{obj.target}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
         </div>
       </ResponsiveNineSlicePanel>
+
+      {subheaderActive && (
+        <div
+          className="w-full flex justify-center"
+          style={{ marginBottom: `${responsive.layoutGap}px` }}
+        >
+          <div
+            className="relative"
+            style={{
+              width: `${responsive.boardWidthPercent}%`,
+              aspectRatio: `${subheaderAspectRatio}`
+            }}
+          >
+            {subheaderContainerOpacity > 0 && (
+              <ResponsiveNineSlicePanel
+                src={boardPanelSrc}
+                {...subheaderPanelConfig}
+                baseBorderWidthPx={responsive.panelBorderBasePx}
+                widthPercent={100}
+                className="absolute inset-0 overflow-hidden pointer-events-none"
+                style={{ opacity: subheaderContainerOpacity }}
+              />
+            )}
+            {subheaderShowContent && (
+              <div
+                className="absolute inset-0 flex items-center justify-center"
+                style={{
+                  padding: `${subheaderPanelPaddingY}px ${subheaderPanelPaddingX}px`
+                }}
+              >
+                {objectiveProgressContent}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-1 w-full min-h-0 flex-col items-center justify-center">
         {/* Game Board Container */}
@@ -5259,6 +5459,24 @@ export const Game: React.FC = () => {
         minAspect={LAYOUT_DEBUG_MIN_ASPECT}
         maxAspect={LAYOUT_DEBUG_MAX_ASPECT}
         spacerAspect={appliedLayoutDebugOverrides.spacerAspect}
+        minHeaderAspectRatio={HEADER_ASPECT_RATIO_MIN}
+        maxHeaderAspectRatio={HEADER_ASPECT_RATIO_MAX}
+        headerAspectRatioStep={HEADER_ASPECT_RATIO_STEP}
+        headerAspectRatio={appliedLayoutDebugOverrides.headerAspectRatio}
+        minSubheaderAspectRatio={SUBHEADER_ASPECT_RATIO_MIN}
+        maxSubheaderAspectRatio={SUBHEADER_ASPECT_RATIO_MAX}
+        subheaderAspectRatioStep={SUBHEADER_ASPECT_RATIO_STEP}
+        subheaderAspectRatio={appliedLayoutDebugOverrides.subheaderAspectRatio}
+        subheaderActive={appliedLayoutDebugOverrides.subheaderActive}
+        minSubheaderPaddingOffset={SUBHEADER_PADDING_OFFSET_MIN}
+        maxSubheaderPaddingOffset={SUBHEADER_PADDING_OFFSET_MAX}
+        subheaderPaddingOffsetStep={SUBHEADER_PADDING_OFFSET_STEP}
+        subheaderPaddingOffset={appliedLayoutDebugOverrides.subheaderPaddingOffset}
+        minSubheaderContainerOpacity={SUBHEADER_CONTAINER_OPACITY_MIN}
+        maxSubheaderContainerOpacity={SUBHEADER_CONTAINER_OPACITY_MAX}
+        subheaderContainerOpacityStep={SUBHEADER_CONTAINER_OPACITY_STEP}
+        subheaderContainerOpacity={appliedLayoutDebugOverrides.subheaderContainerOpacity}
+        subheaderShowContent={appliedLayoutDebugOverrides.subheaderShowContent}
         minScaleMultiplier={NINESLICE_SCALE_MULTIPLIER_MIN}
         maxScaleMultiplier={NINESLICE_SCALE_MULTIPLIER_MAX}
         scaleMultiplierStep={NINESLICE_SCALE_MULTIPLIER_STEP}
@@ -5282,6 +5500,12 @@ export const Game: React.FC = () => {
         copyStatus={layoutDebugCopyStatus}
         debugText={layoutDebugText}
         onChangeSpacerAspect={(value) => updateLayoutDebugOverride({ spacerAspect: value })}
+        onChangeHeaderAspectRatio={(value) => updateLayoutDebugOverride({ headerAspectRatio: value })}
+        onChangeSubheaderAspectRatio={(value) => updateLayoutDebugOverride({ subheaderAspectRatio: value })}
+        onChangeSubheaderActive={(value) => updateLayoutDebugOverride({ subheaderActive: value })}
+        onChangeSubheaderPaddingOffset={(value) => updateLayoutDebugOverride({ subheaderPaddingOffset: value })}
+        onChangeSubheaderContainerOpacity={(value) => updateLayoutDebugOverride({ subheaderContainerOpacity: value })}
+        onChangeSubheaderShowContent={(value) => updateLayoutDebugOverride({ subheaderShowContent: value })}
         onChangeNineSliceScaleMultiplier={(value) => updateLayoutDebugOverride({ nineSliceScaleMultiplier: value })}
         onChangeBoardPaddingMultiplier={(value) => updateLayoutDebugOverride({ boardPaddingMultiplier: value })}
         onChangePowerupSizeMultiplier={(value) => updateLayoutDebugOverride({ powerupSizeMultiplier: value })}

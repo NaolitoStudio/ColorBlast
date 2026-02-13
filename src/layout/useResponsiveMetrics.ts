@@ -50,6 +50,8 @@ type UseResponsiveMetricsArgs = {
   powerupCount?: number;
   minTouchTarget?: number;
   headerAspect?: number;
+  subheaderActive?: boolean;
+  subheaderAspect?: number;
   boardAspect?: number;
   rackAspect?: number;
   spacerHeaderBoardAspect?: number;
@@ -69,6 +71,8 @@ type MetricInput = {
   powerupCount: number;
   minTouchTarget: number;
   headerAspect: number;
+  subheaderActive: boolean;
+  subheaderAspect: number;
   boardAspect: number;
   rackAspect: number;
   spacerHeaderBoardAspect: number;
@@ -123,6 +127,8 @@ const createMetrics = ({
   powerupCount,
   minTouchTarget,
   headerAspect,
+  subheaderActive,
+  subheaderAspect,
   boardAspect,
   rackAspect,
   spacerHeaderBoardAspect,
@@ -191,6 +197,9 @@ const createMetrics = ({
       maxScale: 1,
       panels: [
         { id: 'header', aspectRatio: Math.max(0.0001, headerAspect), widthRatio: 1 },
+        ...(subheaderActive
+          ? [{ id: 'subheader', aspectRatio: Math.max(0.0001, subheaderAspect), widthRatio: 1 }]
+          : []),
         { id: 'space_header_board', aspectRatio: Math.max(0.0001, spacerHeaderBoardAspect), widthRatio: 1 },
         { id: 'board', aspectRatio: Math.max(0.0001, boardAspect), widthRatio: 1 },
         { id: 'space_board_rack', aspectRatio: Math.max(0.0001, spacerBoardRackAspect), widthRatio: 1 },
@@ -356,6 +365,8 @@ export const useResponsiveMetrics = ({
   powerupCount = 4,
   minTouchTarget = 44,
   headerAspect = 5 / 1.5,
+  subheaderActive = false,
+  subheaderAspect = 8.5,
   boardAspect = 1,
   rackAspect = 3 / 2,
   spacerHeaderBoardAspect = DEFAULT_SPACER_HEADER_BOARD_ASPECT,
@@ -376,6 +387,8 @@ export const useResponsiveMetrics = ({
       powerupCount,
       minTouchTarget,
       headerAspect,
+      subheaderActive,
+      subheaderAspect,
       boardAspect,
       rackAspect,
       spacerHeaderBoardAspect,
@@ -414,6 +427,8 @@ export const useResponsiveMetrics = ({
         powerupCount,
         minTouchTarget,
         headerAspect,
+        subheaderActive,
+        subheaderAspect,
         boardAspect,
         rackAspect,
         spacerHeaderBoardAspect,
@@ -499,6 +514,8 @@ export const useResponsiveMetrics = ({
     boardPanelScaleMode,
     boardPaddingMultiplier,
     headerAspect,
+    subheaderActive,
+    subheaderAspect,
     headerRef,
     layoutRef,
     minTouchTarget,
