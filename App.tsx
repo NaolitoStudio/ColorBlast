@@ -2653,6 +2653,44 @@ const App: React.FC = () => {
     superballAnimation
   ]);
 
+  // Keep game-over state in sync with the real board/hand state.
+  // This prevents stale states where no piece fits but game-over is not shown
+  // until the next user interaction.
+  useEffect(() => {
+    if (isInteractionLocked || showLoadingScreen || isIntroArrivalActive || introRequest) return;
+    if (gameState.gameOver || gameState.levelComplete) return;
+    if (gameState.clearingTiles.length > 0) return;
+    if (shuffleAnimations.length > 0 || shufflePhase || superballAnimation) return;
+    if (celebrating || showLevelPopup || showAllClear || showOutOfMovesPopup) return;
+
+    const noValidPlacements = isGameOver(gameState.grid, gameState.hand, gameState.boosters);
+    if (!noValidPlacements) return;
+
+    setGameState(prev => (
+      prev.gameOver || prev.levelComplete
+        ? prev
+        : { ...prev, gameOver: true }
+    ));
+  }, [
+    celebrating,
+    gameState.boosters,
+    gameState.clearingTiles.length,
+    gameState.gameOver,
+    gameState.grid,
+    gameState.hand,
+    gameState.levelComplete,
+    introRequest,
+    isInteractionLocked,
+    isIntroArrivalActive,
+    showAllClear,
+    showLevelPopup,
+    showLoadingScreen,
+    showOutOfMovesPopup,
+    shuffleAnimations.length,
+    shufflePhase,
+    superballAnimation
+  ]);
+
   const startDragging = (e: React.PointerEvent, index: number) => {
     if (isInteractionLocked) return;
     if (gameState.hand[index] === null || gameState.gameOver || celebrating || showLevelPopup || showAllClear || trashingAllPieces) return;
