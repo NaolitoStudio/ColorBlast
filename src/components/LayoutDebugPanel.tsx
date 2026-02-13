@@ -50,7 +50,7 @@ export const LayoutDebugPanel: React.FC<LayoutDebugPanelProps> = ({
   if (!visible) return null;
 
   return (
-    <div className="fixed top-3 right-3 z-[230] w-[360px] max-w-[calc(100vw-1.5rem)] rounded-2xl border border-slate-300/35 bg-slate-950/58 p-3 text-white shadow-2xl backdrop-blur-md">
+    <div className="fixed top-3 right-3 z-[230] w-[360px] max-w-[calc(100vw-1.5rem)] rounded-2xl border border-slate-300/35 bg-slate-950 p-3 text-white shadow-2xl">
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-sm font-black tracking-wide">Layout Debug</h3>
         <button

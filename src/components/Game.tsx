@@ -4720,6 +4720,17 @@ export const Game: React.FC = () => {
         </div>
       )}
 
+      {!isLayoutDebugVisible && (
+        <button
+          onClick={() => setIsLayoutDebugVisible(true)}
+          aria-label="Abrir Layout Debug"
+          title="Abrir Layout Debug"
+          className="fixed right-3 top-3 z-[230] flex h-7 w-7 items-center justify-center rounded-full border border-slate-300/35 bg-slate-950/95 text-sm font-black text-white shadow-lg hover:bg-slate-900"
+        >
+          -
+        </button>
+      )}
+
       <LayoutDebugPanel
         visible={isLayoutDebugVisible}
         minAspect={LAYOUT_DEBUG_MIN_ASPECT}
