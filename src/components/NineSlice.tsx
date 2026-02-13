@@ -173,8 +173,8 @@ export const NineSlice = forwardRef<HTMLDivElement, NineSliceProps>(({
     const measure = () => {
       const rect = node.getBoundingClientRect();
       setHostSize({
-        width: Math.max(0, Math.round(rect.width)),
-        height: Math.max(0, Math.round(rect.height))
+        width: Math.max(0, rect.width),
+        height: Math.max(0, rect.height)
       });
     };
 
@@ -252,23 +252,38 @@ export const NineSlice = forwardRef<HTMLDivElement, NineSliceProps>(({
     }
 
     const canvas = canvasRef.current;
-    const width = hostSize.width;
-    const height = hostSize.height;
     const dpr = window.devicePixelRatio || 1;
+    
+    // Canvas dimensions in physical pixels
+    const physWidth = Math.max(1, Math.round(hostSize.width * dpr));
+    const physHeight = Math.max(1, Math.round(hostSize.height * dpr));
 
-    canvas.width = Math.max(1, Math.round(width * dpr));
-    canvas.height = Math.max(1, Math.round(height * dpr));
+    canvas.width = physWidth;
+    canvas.height = physHeight;
 
     const context = canvas.getContext('2d');
     if (!context) return;
-    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    
+    // Reset transform to draw in physical pixels
+    context.setTransform(1, 0, 0, 1, 0, 0);
     context.imageSmoothingEnabled = true;
-    context.clearRect(0, 0, width, height);
+    context.clearRect(0, 0, physWidth, physHeight);
+
+    // Snap destination slices to physical pixels
+    let destLeft = Math.round(destinationSlices.left * dpr);
+    let destRight = Math.round(destinationSlices.right * dpr);
+    let destTop = Math.round(destinationSlices.top * dpr);
+    let destBottom = Math.round(destinationSlices.bottom * dpr);
+
+    // Ensure snapped slices fit within physical canvas dimensions
+    [destLeft, destRight] = reducePairToMax(destLeft, destRight, Math.max(1, physWidth - 1));
+    [destTop, destBottom] = reducePairToMax(destTop, destBottom, Math.max(1, physHeight - 1));
 
     const srcCenterWidth = Math.max(1, sourceSize.width - sourceSlices.left - sourceSlices.right);
     const srcCenterHeight = Math.max(1, sourceSize.height - sourceSlices.top - sourceSlices.bottom);
-    const dstCenterWidth = Math.max(1, width - destinationSlices.left - destinationSlices.right);
-    const dstCenterHeight = Math.max(1, height - destinationSlices.top - destinationSlices.bottom);
+    
+    const dstCenterWidth = Math.max(1, physWidth - destLeft - destRight);
+    const dstCenterHeight = Math.max(1, physHeight - destTop - destBottom);
 
     const draw = (sx: number, sy: number, sw: number, sh: number, dx: number, dy: number, dw: number, dh: number) => {
       if (sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
@@ -297,14 +312,25 @@ export const NineSlice = forwardRef<HTMLDivElement, NineSliceProps>(({
         : Math.max(1, Math.ceil(dw / naturalTileWidth));
       const tileWidth = mode === 'round' ? dw / count : naturalTileWidth;
 
-      let x = dx;
+      // Pixel-perfect tiling loop
       for (let i = 0; i < count; i++) {
-        const remaining = (dx + dw) - x;
-        if (remaining <= 0) break;
-        const currentWidth = i === count - 1 ? remaining : Math.min(tileWidth, remaining);
-        const sourceWidth = currentWidth >= tileWidth ? sw : Math.max(1, Math.round(sw * (currentWidth / tileWidth)));
-        draw(sx, sy, sourceWidth, sh, x, dy, currentWidth, dh);
-        x += tileWidth;
+        // Calculate integer start/end positions based on the float tileWidth
+        const xStart = Math.round(dx + i * tileWidth);
+        const xEnd = i === count - 1 ? (dx + dw) : Math.round(dx + (i + 1) * tileWidth);
+        const currentWidth = xEnd - xStart;
+        
+        if (currentWidth <= 0) continue;
+
+        // Calculate corresponding source width
+        const ratio = currentWidth / tileWidth;
+        // For the last tile or slight variations, we adjust the source width slightly
+        // effectively stretching/shrinking the source texture by a subpixel amount
+        // to fit the integer pixel grid.
+        const sourceWidth = currentWidth >= Math.floor(tileWidth) 
+            ? sw 
+            : Math.max(1, Math.round(sw * ratio));
+
+        draw(sx, sy, sourceWidth, sh, xStart, dy, currentWidth, dh);
       }
     };
 
@@ -330,39 +356,45 @@ export const NineSlice = forwardRef<HTMLDivElement, NineSliceProps>(({
         : Math.max(1, Math.ceil(dh / naturalTileHeight));
       const tileHeight = mode === 'round' ? dh / count : naturalTileHeight;
 
-      let y = dy;
+      // Pixel-perfect tiling loop
       for (let i = 0; i < count; i++) {
-        const remaining = (dy + dh) - y;
-        if (remaining <= 0) break;
-        const currentHeight = i === count - 1 ? remaining : Math.min(tileHeight, remaining);
-        const sourceHeight = currentHeight >= tileHeight ? sh : Math.max(1, Math.round(sh * (currentHeight / tileHeight)));
-        draw(sx, sy, sw, sourceHeight, dx, y, dw, currentHeight);
-        y += tileHeight;
+        const yStart = Math.round(dy + i * tileHeight);
+        const yEnd = i === count - 1 ? (dy + dh) : Math.round(dy + (i + 1) * tileHeight);
+        const currentHeight = yEnd - yStart;
+
+        if (currentHeight <= 0) continue;
+
+        const ratio = currentHeight / tileHeight;
+        const sourceHeight = currentHeight >= Math.floor(tileHeight)
+            ? sh
+            : Math.max(1, Math.round(sh * ratio));
+
+        draw(sx, sy, sw, sourceHeight, dx, yStart, dw, currentHeight);
       }
     };
 
     // 4 corners
     draw(
       0, 0, sourceSlices.left, sourceSlices.top,
-      0, 0, destinationSlices.left, destinationSlices.top
+      0, 0, destLeft, destTop
     );
     draw(
       sourceSize.width - sourceSlices.right, 0, sourceSlices.right, sourceSlices.top,
-      width - destinationSlices.right, 0, destinationSlices.right, destinationSlices.top
+      physWidth - destRight, 0, destRight, destTop
     );
     draw(
       0, sourceSize.height - sourceSlices.bottom, sourceSlices.left, sourceSlices.bottom,
-      0, height - destinationSlices.bottom, destinationSlices.left, destinationSlices.bottom
+      0, physHeight - destBottom, destLeft, destBottom
     );
     draw(
       sourceSize.width - sourceSlices.right,
       sourceSize.height - sourceSlices.bottom,
       sourceSlices.right,
       sourceSlices.bottom,
-      width - destinationSlices.right,
-      height - destinationSlices.bottom,
-      destinationSlices.right,
-      destinationSlices.bottom
+      physWidth - destRight,
+      physHeight - destBottom,
+      destRight,
+      destBottom
     );
 
     // 4 edges
@@ -371,10 +403,10 @@ export const NineSlice = forwardRef<HTMLDivElement, NineSliceProps>(({
       0,
       srcCenterWidth,
       sourceSlices.top,
-      destinationSlices.left,
+      destLeft,
       0,
       dstCenterWidth,
-      destinationSlices.top,
+      destTop,
       repeat
     );
     drawHorizontalEdge(
@@ -382,10 +414,10 @@ export const NineSlice = forwardRef<HTMLDivElement, NineSliceProps>(({
       sourceSize.height - sourceSlices.bottom,
       srcCenterWidth,
       sourceSlices.bottom,
-      destinationSlices.left,
-      height - destinationSlices.bottom,
+      destLeft,
+      physHeight - destBottom,
       dstCenterWidth,
-      destinationSlices.bottom,
+      destBottom,
       repeat
     );
     drawVerticalEdge(
@@ -394,8 +426,8 @@ export const NineSlice = forwardRef<HTMLDivElement, NineSliceProps>(({
       sourceSlices.left,
       srcCenterHeight,
       0,
-      destinationSlices.top,
-      destinationSlices.left,
+      destTop,
+      destLeft,
       dstCenterHeight,
       repeat
     );
@@ -404,9 +436,9 @@ export const NineSlice = forwardRef<HTMLDivElement, NineSliceProps>(({
       sourceSlices.top,
       sourceSlices.right,
       srcCenterHeight,
-      width - destinationSlices.right,
-      destinationSlices.top,
-      destinationSlices.right,
+      physWidth - destRight,
+      destTop,
+      destRight,
       dstCenterHeight,
       repeat
     );
@@ -417,8 +449,8 @@ export const NineSlice = forwardRef<HTMLDivElement, NineSliceProps>(({
       sourceSlices.top,
       srcCenterWidth,
       srcCenterHeight,
-      destinationSlices.left,
-      destinationSlices.top,
+      destLeft,
+      destTop,
       dstCenterWidth,
       dstCenterHeight
     );
