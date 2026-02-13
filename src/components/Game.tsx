@@ -14,16 +14,6 @@ import { LayoutDebugPanel, LayoutDebugCopyStatus } from './LayoutDebugPanel';
 // Just check if the color value looks like an icon path (starts with '/icons/')
 const isIconPath = (color: string) => color.startsWith('/icons/');
 
-// Lift dragged piece above the finger/cursor so it doesn't get occluded.
-const getDragOffsetY = () => {
-  const isCoarsePointer = typeof window !== 'undefined'
-    && typeof window.matchMedia === 'function'
-    && window.matchMedia('(pointer: coarse)').matches;
-  return isCoarsePointer
-    ? Math.max(105, window.innerHeight * 0.16)
-    : Math.max(60, window.innerHeight * 0.1);
-};
-
 // Helper to get particle color from icon path
 const getParticleColor = (iconPath: string): string => {
   if (iconPath.includes('blue')) return '#3b82f6'; // Blue
@@ -936,6 +926,15 @@ export const Game: React.FC = () => {
     boardPaddingMultiplier: appliedLayoutDebugOverrides.boardPaddingMultiplier,
     rackSlotAspect: UI_ASSET_ASPECT_RATIOS.CONTAINER_NEXT_PIECE
   });
+
+  const dragOffsetY = useMemo(() => {
+    const isCoarsePointer = typeof window !== 'undefined'
+      && typeof window.matchMedia === 'function'
+      && window.matchMedia('(pointer: coarse)').matches;
+    const viewportOffset = responsive.viewportHeight * (isCoarsePointer ? 0.17 : 0.11);
+    const cellOffset = responsive.boardCellSize * (isCoarsePointer ? 3.2 : 2.2);
+    return Math.max(viewportOffset, cellOffset);
+  }, [responsive.boardCellSize, responsive.viewportHeight]);
 
   const queueLevelIntro = useCallback((
     grid: GameState['grid'],
@@ -3011,7 +3010,7 @@ export const Game: React.FC = () => {
 
       // Calculate the visual center of the dragged piece
       const visualX = e.clientX;
-      const visualY = e.clientY - getDragOffsetY();
+      const visualY = e.clientY - dragOffsetY;
 
       // We want the piece's (0,0) tile to be aligned.
       const minX = Math.min(...piece.shape.map(p => p.x));
@@ -3061,7 +3060,7 @@ export const Game: React.FC = () => {
         setReturningPiece({
           piece,
           fromX: dragPosition.x,
-          fromY: dragPosition.y - getDragOffsetY(),
+          fromY: dragPosition.y - dragOffsetY,
           toX: targetX,
           toY: targetY,
           index: pieceIndex,
@@ -4350,7 +4349,7 @@ export const Game: React.FC = () => {
           className="drag-preview"
           style={{
             left: dragPosition.x,
-            top: dragPosition.y - getDragOffsetY()
+            top: dragPosition.y - dragOffsetY
           }}
         >
           <PiecePreview piece={gameState.hand[gameState.selectedPieceIndex]!} active={true} cellSize={dragCellSize} velocity={dragVelocity} />
