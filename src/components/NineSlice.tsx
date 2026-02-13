@@ -471,6 +471,7 @@ export const NineSlice = forwardRef<HTMLDivElement, NineSliceProps>(({
       className={className}
       style={{
         position: style?.position ?? 'relative',
+        boxSizing: style?.boxSizing ?? 'border-box',
         borderStyle: shouldUseCanvas ? undefined : 'solid',
         borderColor: shouldUseCanvas ? undefined : 'transparent',
         borderImageSource: shouldUseCanvas ? undefined : `url(${src})`,

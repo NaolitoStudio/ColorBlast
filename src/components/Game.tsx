@@ -679,6 +679,7 @@ export const Game: React.FC = () => {
     headerRef: headerCardRef,
     powerupCount: 4,
     minTouchTarget: 44,
+    headerAspect: headerPanelConfig.aspectRatio ?? (5 / 1.5),
     boardAspect,
     rackAspect,
     boardPanelScale: boardPanelConfig.scale ?? 1,
@@ -3192,28 +3193,23 @@ export const Game: React.FC = () => {
   };
 
   const isEndGameModalVisible = showLevelPopup || (gameState.gameOver && !gameState.levelComplete);
-  const fallbackLayoutWidth = typeof window === 'undefined'
-    ? 390
-    : Math.min(window.innerWidth, window.innerHeight * (9 / 16));
-  const layoutWidthPx = layoutRef.current?.clientWidth ?? fallbackLayoutWidth;
-  const headerPanelWidthPx = Math.max(1, layoutWidthPx * (responsive.boardWidthPercent / 100));
-  const headerPanelAspectRatio = headerPanelConfig.aspectRatio ?? (5 / 1.5);
-  const headerPanelHeightPx = headerPanelWidthPx / Math.max(0.1, headerPanelAspectRatio);
-  const headerPanelPaddingY = Math.max(6, headerPanelHeightPx * 0.11);
-  const headerPanelPaddingX = Math.max(10, headerPanelWidthPx * 0.045);
-  const headerBadgeFontSize = Math.max(12, headerPanelHeightPx * 0.23);
-  const headerBadgePadX = Math.max(9, headerPanelHeightPx * 0.18);
-  const headerBadgePadY = Math.max(5, headerPanelHeightPx * 0.08);
-  const headerMovesValueSize = Math.max(18, headerPanelHeightPx * 0.32);
-  const headerMovesLabelSize = Math.max(8, headerPanelHeightPx * 0.11);
-  const headerAudioButtonSize = Math.max(30, headerPanelHeightPx * 0.34);
-  const headerAudioIconSize = Math.max(14, headerPanelHeightPx * 0.14);
-  const headerTopRowGap = Math.max(6, headerPanelHeightPx * 0.08);
-  const objectiveIconSize = Math.max(15, headerPanelHeightPx * 0.21);
+  const headerPanelWidthPx = Math.max(1, responsive.boardPanelWidthPx);
+  const uiUnit = Math.max(1, responsive.boardCellSize);
+  const headerPanelPaddingY = Math.max(6, uiUnit * 0.34);
+  const headerPanelPaddingX = Math.max(10, uiUnit * 0.68);
+  const headerBadgeFontSize = Math.max(12, uiUnit * 0.53);
+  const headerBadgePadX = Math.max(9, uiUnit * 0.44);
+  const headerBadgePadY = Math.max(5, uiUnit * 0.2);
+  const headerMovesValueSize = Math.max(18, uiUnit * 0.82);
+  const headerMovesLabelSize = Math.max(8, uiUnit * 0.28);
+  const headerAudioButtonSize = Math.max(30, uiUnit * 0.78);
+  const headerAudioIconSize = Math.max(14, uiUnit * 0.34);
+  const headerTopRowGap = Math.max(6, uiUnit * 0.24);
+  const objectiveIconSize = Math.max(15, uiUnit * 0.52);
   const objectiveBarHeight = objectiveIconSize;
-  const objectiveBarWidth = Math.max(72, headerPanelWidthPx * 0.26);
-  const objectiveRowGap = Math.max(8, headerPanelWidthPx * 0.025);
-  const objectiveGroupGap = Math.max(6, headerPanelWidthPx * 0.014);
+  const objectiveBarWidth = Math.max(72, Math.min(headerPanelWidthPx * 0.26, uiUnit * 2.8));
+  const objectiveRowGap = Math.max(8, uiUnit * 0.4);
+  const objectiveGroupGap = Math.max(6, uiUnit * 0.24);
   const objectiveTrackSource = gameState.objectives[1]?.color ?? gameState.objectives[0]?.color ?? '#3b82f6';
   const objectiveTrackColor = isIconPath(objectiveTrackSource)
     ? getParticleColor(objectiveTrackSource)
@@ -3245,7 +3241,7 @@ export const Game: React.FC = () => {
           paddingLeft: `${responsive.layoutPadding}px`,
           paddingRight: `${responsive.layoutPadding}px`,
           paddingBottom: `${responsive.layoutPadding}px`,
-          paddingTop: `calc(${responsive.layoutPadding + (responsive.layoutGap * 2.8)}px + env(safe-area-inset-top, 0px))`
+          paddingTop: `calc(${responsive.layoutPadding}px + env(safe-area-inset-top, 0px))`
         }}
         onPointerMove={handlePointerMove}
         onPointerUp={stopDragging}
