@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect } from 'react';
 import { flushSync } from 'react-dom';
-import { GameState, PieceData, Point, Color, LevelObjective, Booster, BoosterType } from '../../types';
+import { GameState, PieceData, Point, Color, LevelObjective, Booster, BoosterType, TileData } from '../../types';
 import { createRandomGrid, generatePiece, generateValidHand, canPlacePiece, findMatchGroups, findGroupCenter, getBombExplosionPoints, isGameOver, calculateScore, initializeObjectives, getAdjacentToMatches, addRandomBlocks, AddedBlock, getColorsForLevel, getPieceShapeSignature } from '../../utils/gameLogic';
 import { GRID_SIZE, getLevelConfig } from '../../constants';
 import { ICONS, UI_ASSETS, UI_ASSET_ASPECT_RATIOS } from '../../assets';
@@ -11,6 +11,21 @@ import { useResponsiveMetrics } from '../layout/useResponsiveMetrics';
 import { LayoutDebugPanel, LayoutDebugCopyStatus } from './LayoutDebugPanel';
 import { useAnimationFrame } from '../hooks/useAnimationFrame';
 import { createSeededRandom, hashStringToSeed, RandomFn, shuffleWithRandom } from '../utils/stableRandom';
+import {
+  ActiveEffect,
+  DestructionRequest,
+  DestructionRuntimeState
+} from '../game/destruction/types';
+import {
+  applyCommitToSnapshot,
+  computeCommitForEffect,
+  createActiveEffect,
+  createDestructionRequest,
+  getBoosterPreviewColor,
+  resolveEffectVisualTargets,
+  toCellKeys,
+  toRuntimeState
+} from '../game/destruction/engine';
 
 // Since Color enum values are already icon paths, we don't need a separate mapping
 // Just check if the color value looks like an icon path (starts with '/icons/')
@@ -65,6 +80,7 @@ const POWERUP_GAP_MULTIPLIER_MIN = 0.5;
 const POWERUP_GAP_MULTIPLIER_MAX = 2;
 const POWERUP_GAP_MULTIPLIER_STEP = 0.01;
 const FRAME_MS_60FPS = 1000 / 60;
+const POST_DESTRUCTION_ALL_CLEAR_DELAY_MS = 650;
 
 type LayoutDebugOverrides = {
   spacerAspect: number;
@@ -759,6 +775,12 @@ const PowerupDarkOverlay: React.FC<{
   />
 );
 
+const createLevelOneTestBoosters = (): Booster[] => ([
+  { id: 'test-superball-left', type: 'color_ball', x: 2, y: 3, color: Color.BLUE },
+  { id: 'test-line-bomb-center', type: 'line_bomb', x: 3, y: 3, color: Color.ORANGE },
+  { id: 'test-superball-right', type: 'color_ball', x: 4, y: 3, color: Color.ORANGE }
+]);
+
 export const Game: React.FC = () => {
   // Audio system
   const audio = useAudio();
@@ -774,10 +796,7 @@ export const Game: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(() => {
     const initialLevel = 1;
     const levelConfig = getLevelConfig(initialLevel);
-    const initialBoosters: Booster[] = [
-      { id: 'test-superball-1', type: 'color_ball', x: 3, y: 3, color: Color.BLUE },
-      { id: 'test-superball-2', type: 'color_ball', x: 4, y: 4, color: Color.ORANGE }
-    ];
+    const initialBoosters = createLevelOneTestBoosters();
     const initialGrid = removeTilesAtPoints(
       createRandomGrid(levelConfig.gridFill, initialLevel),
       initialBoosters.map(booster => ({ x: booster.x, y: booster.y }))
@@ -802,6 +821,7 @@ export const Game: React.FC = () => {
       stars: 0
     };
   });
+  const gameStateRef = useRef(gameState);
 
   const [hoveredCell, setHoveredCell] = useState<Point | null>(null);
   const [dragPosition, setDragPosition] = useState<{ x: number, y: number } | null>(null);
@@ -831,7 +851,14 @@ export const Game: React.FC = () => {
   const [showOutOfMovesPopup, setShowOutOfMovesPopup] = useState(false);
   const [watchingMovesAd, setWatchingMovesAd] = useState(false);
   const [trashingAllPieces, setTrashingAllPieces] = useState(false);
-  const [superballAnimation, setSuperballAnimation] = useState<SuperballAnimationState | null>(null);
+  const [superballAnimations, setSuperballAnimations] = useState<SuperballAnimationState[]>([]);
+  const [destructionRuntime, setDestructionRuntime] = useState<DestructionRuntimeState>(() => (
+    toRuntimeState([], [])
+  ));
+  const destructionQueueRef = useRef<DestructionRequest[]>([]);
+  const activeDestructionEffectsRef = useRef<Map<string, ActiveEffect>>(new Map());
+  const destructionCommitTimersRef = useRef<Map<string, number>>(new Map());
+  const engineIdleCallbacksRef = useRef<Array<() => void>>([]);
   const [shufflePhase, setShufflePhase] = useState<'darkening' | 'levitating' | 'scrambling' | 'landing' | null>(null);
   const [shuffleAnimations, setShuffleAnimations] = useState<Array<{
     tile: { color: Color; id: string };
@@ -874,6 +901,10 @@ export const Game: React.FC = () => {
     minLoadingMs: number;
     showLoadingOverlay: boolean;
   } | null>(null);
+  const pendingAllClearAfterDestructionRef = useRef(false);
+  const pendingOnlyBoostersAfterDestructionRef = useRef(false);
+  const isGameplayInputLocked = isInteractionLocked || destructionRuntime.destructionLock;
+  const superballAnimation = superballAnimations[0] ?? null;
 
   const layoutRef = useRef<HTMLDivElement>(null);
   const headerCardRef = useRef<HTMLDivElement>(null);
@@ -1188,6 +1219,10 @@ export const Game: React.FC = () => {
     queueLevelIntro(gameState.grid, gameState.boosters, 700);
   }, [gameState.boosters, gameState.grid, isCriticalAssetsReady, queueLevelIntro, theme.isReady]);
 
+  useEffect(() => {
+    gameStateRef.current = gameState;
+  }, [gameState]);
+
   // Hard lock gameplay interactions while loading/intro is active.
   useEffect(() => {
     if (!isInteractionLocked) return;
@@ -1451,142 +1486,361 @@ export const Game: React.FC = () => {
     }, 1500);
   };
 
-  // Get cells that would be affected by a booster
-  const getBoosterAffectedCells = (booster: Booster): Set<string> => {
-    const affected = new Set<string>();
-    const grid = gameState.grid;
+  const syncDestructionRuntime = useCallback(() => {
+    const pendingRequests = [...destructionQueueRef.current];
+    const activeEffects = Array.from(activeDestructionEffectsRef.current.values())
+      .sort((a, b) => a.startedAt - b.startedAt);
+    setDestructionRuntime(toRuntimeState(pendingRequests, activeEffects));
+  }, []);
 
-    if (booster.type === 'rocket_h') {
-      // Entire row only
-      for (let i = 0; i < GRID_SIZE; i++) {
-        affected.add(`${i},${booster.y}`);
-      }
-    } else if (booster.type === 'rocket_v') {
-      // Entire column only
-      for (let i = 0; i < GRID_SIZE; i++) {
-        affected.add(`${booster.x},${i}`);
-      }
-    } else if (booster.type === 'line_bomb') {
-      // Entire row and column
-      for (let i = 0; i < GRID_SIZE; i++) {
-        affected.add(`${i},${booster.y}`); // Row
-        affected.add(`${booster.x},${i}`); // Column
-      }
-    } else if (booster.type === 'bomb') {
-      // 1 layer around (8 neighbors + center)
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const nx = booster.x + dx;
-          const ny = booster.y + dy;
-          if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE) {
-            affected.add(`${nx},${ny}`);
-          }
-        }
-      }
-    } else if (booster.type === 'color_ball') {
-      // Prefer booster color; if unavailable, fallback to the most abundant color on board.
-      const targetColor = resolveSuperballTargetColor(grid, booster.color);
-      if (targetColor) {
-        for (let y = 0; y < GRID_SIZE; y++) {
-          for (let x = 0; x < GRID_SIZE; x++) {
-            if (grid[y][x]?.color === targetColor) {
-              affected.add(`${x},${y}`);
-            }
-          }
-        }
-      }
-      // Also include the booster position
-      affected.add(`${booster.x},${booster.y}`);
+  const resolvePendingPostDestruction = useCallback(() => {
+    if (destructionQueueRef.current.length > 0 || activeDestructionEffectsRef.current.size > 0) return;
+
+    if (pendingAllClearAfterDestructionRef.current) {
+      pendingAllClearAfterDestructionRef.current = false;
+      pendingOnlyBoostersAfterDestructionRef.current = false;
+      setTimeout(() => handleAllClear(), POST_DESTRUCTION_ALL_CLEAR_DELAY_MS);
+      return;
     }
 
-    return affected;
-  };
+    if (pendingOnlyBoostersAfterDestructionRef.current) {
+      pendingOnlyBoostersAfterDestructionRef.current = false;
+      setTimeout(() => handleOnlyBoostersLeft(), 120);
+    }
+  }, [handleAllClear, handleOnlyBoostersLeft]);
+
+  const flushEngineIdleCallbacks = useCallback(() => {
+    if (destructionQueueRef.current.length > 0) return;
+    if (activeDestructionEffectsRef.current.size > 0) return;
+    resolvePendingPostDestruction();
+    if (engineIdleCallbacksRef.current.length === 0) return;
+
+    const callbacks = [...engineIdleCallbacksRef.current];
+    engineIdleCallbacksRef.current = [];
+    callbacks.forEach((callback) => callback());
+  }, [resolvePendingPostDestruction]);
+
+  const onDestructionEngineIdle = useCallback((callback: () => void) => {
+    if (destructionQueueRef.current.length === 0 && activeDestructionEffectsRef.current.size === 0) {
+      callback();
+      return;
+    }
+    engineIdleCallbacksRef.current.push(callback);
+  }, []);
+
+  const getDestructionSnapshot = useCallback(() => {
+    const snapshot = gameStateRef.current;
+    return {
+      grid: snapshot.grid,
+      boosters: snapshot.boosters,
+      objectives: snapshot.objectives
+    };
+  }, []);
+
+  const processDestructionQueueRef = useRef<() => void>(() => {});
+  const commitDestructionEffectRef = useRef<(effectId: string) => void>(() => {});
+
+  const enqueueChainBoosters = useCallback((boosterIds: string[]) => {
+    if (boosterIds.length === 0) return;
+
+    const activeBoosterIds = new Set(
+      Array.from(activeDestructionEffectsRef.current.values())
+        .map((effect) => effect.boosterId)
+        .filter((id): id is string => Boolean(id))
+    );
+    const queuedBoosterIds = new Set(
+      destructionQueueRef.current
+        .map((request) => request.boosterId)
+        .filter((id): id is string => Boolean(id))
+    );
+    const liveBoosters = new Set(gameStateRef.current.boosters.map((booster) => booster.id));
+
+    for (const boosterId of boosterIds) {
+      if (!liveBoosters.has(boosterId)) continue;
+      if (activeBoosterIds.has(boosterId)) continue;
+      if (queuedBoosterIds.has(boosterId)) continue;
+
+      destructionQueueRef.current.push(createDestructionRequest({
+        kind: 'booster',
+        source: 'chain',
+        boosterId
+      }));
+      queuedBoosterIds.add(boosterId);
+    }
+  }, []);
+
+  const finalizeDestructionEffect = useCallback((effectId: string) => {
+    const commitTimer = destructionCommitTimersRef.current.get(effectId);
+    if (commitTimer !== undefined) {
+      window.clearTimeout(commitTimer);
+      destructionCommitTimersRef.current.delete(effectId);
+    }
+
+    activeDestructionEffectsRef.current.delete(effectId);
+    syncDestructionRuntime();
+    processDestructionQueueRef.current();
+    flushEngineIdleCallbacks();
+  }, [flushEngineIdleCallbacks, syncDestructionRuntime]);
+
+  const commitDestructionEffect = useCallback((effectId: string) => {
+    const effect = activeDestructionEffectsRef.current.get(effectId);
+    if (!effect) return;
+
+    activeDestructionEffectsRef.current.set(effectId, { ...effect, phase: 'commit' });
+    syncDestructionRuntime();
+
+    const snapshotBefore = getDestructionSnapshot();
+    const commit = computeCommitForEffect(effect, snapshotBefore);
+
+    if (effect.request.kind === 'booster' && effect.boosterType === 'color_ball') {
+      audio.play('superball', 0.25);
+    } else if (effect.request.kind === 'direct') {
+      audio.play('match');
+    }
+
+    const hasCommitMutations = (
+      commit.removeTileIds.length > 0
+      || commit.unlockTileIds.length > 0
+      || commit.removeBoosterIds.length > 0
+    );
+
+    if (boardRef.current && hasCommitMutations) {
+      const tileToCell = new Map<string, { x: number; y: number; tile: TileData }>();
+      for (let y = 0; y < GRID_SIZE; y++) {
+        for (let x = 0; x < GRID_SIZE; x++) {
+          const tile = snapshotBefore.grid[y][x];
+          if (!tile) continue;
+          tileToCell.set(tile.id, { x, y, tile });
+        }
+      }
+
+      for (const tileId of commit.removeTileIds) {
+        const entry = tileToCell.get(tileId);
+        if (!entry) continue;
+        const metrics = getCellMetrics(entry.x, entry.y);
+        if (!metrics) continue;
+        spawnParticles(metrics.centerX, metrics.centerY, entry.tile.color, 8);
+      }
+
+      for (const tileId of commit.unlockTileIds) {
+        const entry = tileToCell.get(tileId);
+        if (!entry) continue;
+        const metrics = getCellMetrics(entry.x, entry.y);
+        if (!metrics) continue;
+        spawnFloatingText(metrics.centerX, metrics.centerY, '🔓');
+      }
+
+      if (commit.scoreDelta > 0 && commit.removeTileIds.length > 0) {
+        const points = commit.removeTileIds
+          .map((tileId) => tileToCell.get(tileId))
+          .filter((entry): entry is { x: number; y: number; tile: TileData } => Boolean(entry));
+        if (points.length > 0) {
+          const avgX = points.reduce((acc, entry) => acc + entry.x, 0) / points.length;
+          const avgY = points.reduce((acc, entry) => acc + entry.y, 0) / points.length;
+          const centerMetrics = getBoardCellMetrics(boardRef.current, avgX, avgY);
+          spawnFloatingText(centerMetrics.centerX, centerMetrics.centerY, `+${commit.scoreDelta}`);
+        }
+      }
+    }
+
+    if (hasCommitMutations) {
+      triggerShake();
+    }
+
+    if (hasCommitMutations || Object.keys(commit.objectiveDeltas).length > 0 || commit.scoreDelta > 0) {
+      const updatedSnapshot = applyCommitToSnapshot(snapshotBefore, commit);
+      const updatedObjectives = snapshotBefore.objectives.map((objective) => ({
+        ...objective,
+        current: Math.min(
+          objective.target,
+          objective.current + (commit.objectiveDeltas[objective.color] ?? 0)
+        )
+      }));
+      const isLevelComplete = updatedObjectives.slice(0, 2).every((objective) => objective.current >= objective.target);
+
+      const nextState: GameState = {
+        ...gameStateRef.current,
+        grid: updatedSnapshot.grid,
+        boosters: updatedSnapshot.boosters,
+        score: gameStateRef.current.score + commit.scoreDelta,
+        objectives: updatedObjectives,
+        levelComplete: isLevelComplete,
+        clearingTiles: [],
+        gameOver: false
+      };
+
+      if (!isLevelComplete) {
+        if (isGridEmpty(nextState.grid, nextState.boosters)) {
+          pendingAllClearAfterDestructionRef.current = true;
+          pendingOnlyBoostersAfterDestructionRef.current = false;
+        } else if (hasOnlyBoostersLeft(nextState.grid, nextState.boosters)) {
+          pendingOnlyBoostersAfterDestructionRef.current = true;
+        } else {
+          pendingAllClearAfterDestructionRef.current = false;
+          pendingOnlyBoostersAfterDestructionRef.current = false;
+          nextState.gameOver = isGameOver(nextState.grid, nextState.hand, nextState.boosters);
+        }
+      } else {
+        pendingAllClearAfterDestructionRef.current = false;
+        pendingOnlyBoostersAfterDestructionRef.current = false;
+      }
+
+      gameStateRef.current = nextState;
+      setGameState(nextState);
+    }
+
+    enqueueChainBoosters(commit.triggerBoosterIds);
+    finalizeDestructionEffect(effectId);
+  }, [
+    audio,
+    enqueueChainBoosters,
+    finalizeDestructionEffect,
+    getDestructionSnapshot,
+    handleAllClear,
+    handleOnlyBoostersLeft,
+    isGridEmpty,
+    hasOnlyBoostersLeft
+  ]);
+
+  commitDestructionEffectRef.current = commitDestructionEffect;
+
+  const processDestructionQueue = useCallback(() => {
+    if (destructionQueueRef.current.length === 0) {
+      syncDestructionRuntime();
+      flushEngineIdleCallbacks();
+      return;
+    }
+
+    const snapshot = getDestructionSnapshot();
+    const startedAt = Date.now();
+    const batch = destructionQueueRef.current.splice(0, destructionQueueRef.current.length);
+
+    const activeBoosterIds = new Set(
+      Array.from(activeDestructionEffectsRef.current.values())
+        .map((effect) => effect.boosterId)
+        .filter((id): id is string => Boolean(id))
+    );
+
+    let hasStartedAny = false;
+    for (const request of batch) {
+      if (request.kind === 'booster' && request.boosterId && activeBoosterIds.has(request.boosterId)) {
+        continue;
+      }
+
+      const effect = createActiveEffect(request, snapshot, startedAt);
+      if (!effect) continue;
+
+      activeDestructionEffectsRef.current.set(effect.effectId, effect);
+      if (effect.boosterId) {
+        activeBoosterIds.add(effect.boosterId);
+      }
+
+      if (effect.request.kind === 'booster' && effect.boosterType === 'color_ball') {
+        audio.play('superballCharge', undefined, 0.8);
+      } else if (effect.request.kind === 'booster') {
+        audio.play('activateBooster', 0.15);
+      }
+
+      const timeoutMs = Math.max(0, effect.commitAt - Date.now());
+      const timerId = window.setTimeout(() => {
+        commitDestructionEffectRef.current(effect.effectId);
+      }, timeoutMs);
+      destructionCommitTimersRef.current.set(effect.effectId, timerId);
+      hasStartedAny = true;
+    }
+
+    if (!hasStartedAny && destructionQueueRef.current.length > 0) {
+      processDestructionQueueRef.current();
+      return;
+    }
+
+    syncDestructionRuntime();
+    flushEngineIdleCallbacks();
+  }, [audio, flushEngineIdleCallbacks, getDestructionSnapshot, syncDestructionRuntime]);
+
+  processDestructionQueueRef.current = processDestructionQueue;
+
+  const dispatchDestructionRequest = useCallback((
+    requestInput: Omit<DestructionRequest, 'requestId' | 'requestedAt'>
+  ) => {
+    destructionQueueRef.current.push(createDestructionRequest(requestInput));
+    syncDestructionRuntime();
+    processDestructionQueueRef.current();
+  }, [syncDestructionRuntime]);
+
+  useEffect(() => {
+    return () => {
+      destructionCommitTimersRef.current.forEach((timerId) => {
+        window.clearTimeout(timerId);
+      });
+      destructionCommitTimersRef.current.clear();
+      activeDestructionEffectsRef.current.clear();
+      destructionQueueRef.current = [];
+      engineIdleCallbacksRef.current = [];
+      pendingAllClearAfterDestructionRef.current = false;
+      pendingOnlyBoostersAfterDestructionRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const telegraphEffects = destructionRuntime.activeEffects
+      .filter((effect) => effect.phase === 'telegraph');
+    const snapshot = getDestructionSnapshot();
+
+    const nonSuperballEffect = telegraphEffects.find((effect) => effect.boosterType !== 'color_ball');
+    if (nonSuperballEffect) {
+      const visualTargets = resolveEffectVisualTargets(nonSuperballEffect, snapshot);
+      setAffectedCells(toCellKeys(visualTargets));
+      setAffectedColor(getBoosterPreviewColor(nonSuperballEffect.boosterType));
+    } else {
+      setAffectedCells(new Set());
+      setAffectedColor('transparent');
+    }
+
+    const nextSuperballAnimations: SuperballAnimationState[] = [];
+    telegraphEffects
+      .filter((effect) => effect.boosterType === 'color_ball' && effect.boosterId)
+      .forEach((effect) => {
+        const booster = snapshot.boosters.find((entry) => entry.id === effect.boosterId);
+        if (!booster) return;
+
+        const visualTargets = resolveEffectVisualTargets(effect, snapshot);
+        nextSuperballAnimations.push({
+          booster,
+          affectedCells: toCellKeys(visualTargets),
+          phase: 'buildup'
+        });
+      });
+
+    setSuperballAnimations(nextSuperballAnimations);
+  }, [destructionRuntime.activeEffects, gameState.grid, gameState.boosters, getDestructionSnapshot]);
 
   // Chain explosion celebration when level is complete
   const startCelebration = () => {
     setCelebrating(true);
     audio.play('levelComplete');
 
-    const boosters = [...gameState.boosters];
-    const boosterDelay = 400; // ms between booster activations
-
-    // Phase 1: Activate all boosters first
-    if (boosters.length > 0) {
-      boosters.forEach((booster, index) => {
-        setTimeout(() => {
-          // Trigger booster explosion visually
-          celebrationBoosterExplosion(booster);
-
-          // After last booster, start phase 2
-          if (index === boosters.length - 1) {
-            setTimeout(() => {
-              explodeRemainingBlocks();
-            }, 500);
-          }
-        }, index * boosterDelay);
-      });
-    } else {
-      // No boosters, go directly to phase 2
+    const boosters = [...gameStateRef.current.boosters];
+    if (boosters.length === 0) {
       explodeRemainingBlocks();
+      return;
     }
-  };
 
-  // Explode a booster during celebration (simplified version)
-  const celebrationBoosterExplosion = (booster: Booster) => {
-    // Use getBoosterAffectedCells to get the affected points
-    const affectedSet = getBoosterAffectedCells(booster);
-    const affectedPoints: Point[] = Array.from(affectedSet).map(key => {
-      const [x, y] = key.split(',').map(Number);
-      return { x, y };
+    boosters.forEach((booster, index) => {
+      setTimeout(() => {
+        dispatchDestructionRequest({
+          kind: 'booster',
+          source: 'celebration',
+          boosterId: booster.id
+        });
+      }, index * 120);
     });
 
-    // Show indicator
-    const previewCells = new Set(affectedPoints.map(p => `${p.x},${p.y}`));
-    const previewColor = booster.type === 'rocket_h' || booster.type === 'rocket_v' ? 'rgba(239, 68, 68, 0.3)'
-      : booster.type === 'line_bomb' ? 'rgba(59, 130, 246, 0.3)'
-      : booster.type === 'bomb' ? 'rgba(249, 115, 22, 0.3)'
-      : 'rgba(168, 85, 247, 0.3)';
-
-    setAffectedCells(previewCells);
-    setAffectedColor(previewColor);
-
-    // Spawn particles and clear affected cells
-    if (boardRef.current) {
-      setGameState(prev => {
-        const newGrid = prev.grid.map(row => [...row]);
-        let scoreBonus = 0;
-
-        affectedPoints.forEach(p => {
-          const cell = newGrid[p.y]?.[p.x];
-          if (cell) {
-            const metrics = getCellMetrics(p.x, p.y);
-            if (metrics) {
-              spawnParticles(metrics.centerX, metrics.centerY, cell.color, 6);
-            }
-            newGrid[p.y][p.x] = null;
-            scoreBonus += 10;
-          }
-        });
-
-        // Remove the booster
-        const newBoosters = prev.boosters.filter(b => b.id !== booster.id);
-
-        return {
-          ...prev,
-          grid: newGrid,
-          boosters: newBoosters,
-          score: prev.score + scoreBonus
-        };
-      });
-    }
-
-    triggerShake();
-
-    // Clear indicator
-    setTimeout(() => {
-      setAffectedCells(new Set());
-      setAffectedColor('transparent');
-    }, 300);
+    onDestructionEngineIdle(() => {
+      setTimeout(() => {
+        explodeRemainingBlocks();
+      }, 220);
+    });
   };
 
   // Phase 2: Explode remaining blocks one by one
@@ -1650,10 +1904,14 @@ export const Game: React.FC = () => {
   const handleRestart = () => {
     const initialLevel = 1;
     const levelConfig = getLevelConfig(initialLevel);
-    const initialGrid = createRandomGrid(levelConfig.gridFill, initialLevel);
+    const initialBoosters = createLevelOneTestBoosters();
+    const initialGrid = removeTilesAtPoints(
+      createRandomGrid(levelConfig.gridFill, initialLevel),
+      initialBoosters.map(booster => ({ x: booster.x, y: booster.y }))
+    );
     setGameState({
       grid: initialGrid,
-      boosters: [],
+      boosters: initialBoosters,
       score: 0,
       highScore: Number(localStorage.getItem('highScore')) || 0,
       moves: 20,
@@ -1676,7 +1934,17 @@ export const Game: React.FC = () => {
     setShuffleUses(3);
     setDeleteBlockUses(3);
     setWildcardUses(3);
-    queueLevelIntro(initialGrid, [], 650);
+    destructionQueueRef.current = [];
+    activeDestructionEffectsRef.current.clear();
+    destructionCommitTimersRef.current.forEach((timerId) => {
+      window.clearTimeout(timerId);
+    });
+    destructionCommitTimersRef.current.clear();
+    engineIdleCallbacksRef.current = [];
+    pendingAllClearAfterDestructionRef.current = false;
+    pendingOnlyBoostersAfterDestructionRef.current = false;
+    syncDestructionRuntime();
+    queueLevelIntro(initialGrid, initialBoosters, 650);
   };
 
   const handleNextLevel = () => {
@@ -1707,6 +1975,16 @@ export const Game: React.FC = () => {
     setShuffleUses(3);
     setDeleteBlockUses(3);
     setWildcardUses(3);
+    destructionQueueRef.current = [];
+    activeDestructionEffectsRef.current.clear();
+    destructionCommitTimersRef.current.forEach((timerId) => {
+      window.clearTimeout(timerId);
+    });
+    destructionCommitTimersRef.current.clear();
+    engineIdleCallbacksRef.current = [];
+    pendingAllClearAfterDestructionRef.current = false;
+    pendingOnlyBoostersAfterDestructionRef.current = false;
+    syncDestructionRuntime();
     queueLevelIntro(newGrid, [], 650);
   };
 
@@ -1718,56 +1996,12 @@ export const Game: React.FC = () => {
     setDeleteBlockMode(false);
     setDeleteBlockUses(prev => prev - 1);
 
-    // Spawn particles at the tile position
-    if (boardRef.current) {
-      const metrics = getCellMetrics(x, y);
-      if (metrics) {
-        spawnParticles(metrics.centerX, metrics.centerY, tile.color, 8);
-
-        // Show floating text
-        setFloatingTexts(prev => [...prev, {
-          id: `delete-${Date.now()}`,
-          text: '+15',
-          x: metrics.centerX,
-          y: metrics.centerY,
-          color: tile.color
-        }]);
-      }
-    }
-
-    triggerShake();
-    audio.play('match');
-
-    // Add to clearing tiles for animation
-    setGameState(prev => {
-      const newObjectives = prev.objectives.map(obj =>
-        obj.color === tile.color
-          ? { ...obj, current: Math.min(obj.target, obj.current + 1) }
-          : obj
-      );
-      const isLevelComplete = newObjectives.slice(0, 2).every(obj => obj.current >= obj.target);
-
-      return {
-        ...prev,
-        clearingTiles: [tile.id],
-        score: prev.score + 15,
-        objectives: newObjectives,
-        levelComplete: isLevelComplete
-      };
+    dispatchDestructionRequest({
+      kind: 'direct',
+      source: 'target',
+      tileIds: [tile.id],
+      scorePerTile: 15
     });
-
-    // Remove tile after animation
-    setTimeout(() => {
-      setGameState(prev => {
-        const newGrid = prev.grid.map(row => [...row]);
-        newGrid[y][x] = null;
-        return {
-          ...prev,
-          grid: newGrid,
-          clearingTiles: []
-        };
-      });
-    }, 200);
   };
 
   // Handle wildcard: change block color to create the best possible match
@@ -1813,386 +2047,44 @@ export const Game: React.FC = () => {
       bestColor = otherColors[Math.floor(Math.random() * otherColors.length)];
     }
 
-    // Play wildcard sound
     audio.play('createBooster');
 
-    // Spawn particles at the tile position
-    if (boardRef.current) {
-      const metrics = getCellMetrics(x, y);
-      if (metrics) {
-        spawnParticles(metrics.centerX, metrics.centerY, bestColor, 6);
-      }
-    }
+    const recoloredGrid = gameState.grid.map(row => [...row]);
+    recoloredGrid[y][x] = { ...tile, color: bestColor };
 
-    // Update the tile color and check for matches
-    const newGrid = gameState.grid.map(row => [...row]);
-    newGrid[y][x] = { ...tile, color: bestColor };
+    setGameState(prev => ({ ...prev, grid: recoloredGrid }));
+    gameStateRef.current = { ...gameStateRef.current, grid: recoloredGrid };
 
-    // Check for matches after color change
-    const matchGroups = findMatchGroups(newGrid);
+    const matchGroups = findMatchGroups(recoloredGrid);
+    if (matchGroups.length === 0) return;
 
-    if (matchGroups.length > 0) {
-      // Collect all cleared points
-      let allClearedPoints: Point[] = [];
-      matchGroups.forEach(group => {
-        group.forEach(p => {
-          if (!allClearedPoints.some(cp => cp.x === p.x && cp.y === p.y)) {
-            allClearedPoints.push(p);
-          }
-        });
+    const matchingIds = new Set<string>();
+    matchGroups.forEach(group => {
+      group.forEach(point => {
+        const cell = recoloredGrid[point.y][point.x];
+        if (cell) matchingIds.add(cell.id);
       });
+    });
 
-      // Count colors for objectives
-      const colorCounts: Record<string, number> = {};
-      allClearedPoints.forEach(p => {
-        const cell = newGrid[p.y][p.x];
-        if (cell) {
-          colorCounts[cell.color] = (colorCounts[cell.color] || 0) + 1;
-        }
-      });
+    if (matchingIds.size === 0) return;
 
-      // Update objectives
-      const newObjectives = gameState.objectives.map(obj => ({
-        ...obj,
-        current: Math.min(obj.target, obj.current + (colorCounts[obj.color] || 0))
-      }));
-
-      const isLevelComplete = newObjectives.slice(0, 2).every(obj => obj.current >= obj.target);
-      const matchingIds = allClearedPoints.map(p => newGrid[p.y][p.x]?.id).filter(Boolean) as string[];
-
-      // Spawn particles for cleared blocks
-      if (boardRef.current) {
-        allClearedPoints.forEach(p => {
-          const cell = newGrid[p.y][p.x];
-          if (cell) {
-            const metrics = getCellMetrics(p.x, p.y);
-            if (metrics) {
-              spawnParticles(metrics.centerX, metrics.centerY, cell.color, 6);
-            }
-          }
-        });
-      }
-
-      triggerShake();
-      audio.play('match');
-
-      setGameState(prev => ({
-        ...prev,
-        grid: newGrid,
-        clearingTiles: matchingIds,
-        objectives: newObjectives,
-        levelComplete: isLevelComplete
-      }));
-
-      // Clear tiles after animation
-      setTimeout(() => {
-        setGameState(prev => {
-          let finalGrid = prev.grid.map(row =>
-            row.map(cell => cell && matchingIds.includes(cell.id) ? null : cell)
-          );
-
-          // Add random blocks to maintain coverage
-          const levelConfig = getLevelConfig(prev.level);
-          const totalCells = GRID_SIZE * GRID_SIZE;
-          const targetTiles = Math.floor(totalCells * levelConfig.gridFill);
-          const currentTiles = finalGrid.flat().filter(cell => cell !== null).length;
-          const blocksToAdd = Math.max(1, Math.min(3, targetTiles - currentTiles));
-          const boosterPositions = prev.boosters.map(b => ({ x: b.x, y: b.y }));
-          const result = addRandomBlocks(finalGrid, blocksToAdd, prev.level, boosterPositions);
-          finalGrid = result.grid;
-
-          if (result.addedBlocks.length > 0) {
-            pendingIncomingBlocksRef.current = result.addedBlocks;
-          }
-
-          return {
-            ...prev,
-            grid: finalGrid,
-            clearingTiles: []
-          };
-        });
-      }, 400);
-    } else {
-      // No match, just update color
-      setGameState(prev => ({
-        ...prev,
-        grid: newGrid
-      }));
-    }
+    dispatchDestructionRequest({
+      kind: 'direct',
+      source: 'wildcard',
+      tileIds: Array.from(matchingIds),
+      scorePerTile: 15
+    });
   };
 
   // Handle clicking on a booster to activate it
   const activateBooster = (booster: Booster) => {
-    if (isInteractionLocked) return;
+    if (isGameplayInputLocked) return;
     if (celebrating || showLevelPopup || showAllClear || gameState.gameOver) return;
-    if (affectedCells.size > 0 || superballAnimation) return; // Already activating
-
-    // Special animation for color_ball (superball)
-    if (booster.type === 'color_ball') {
-      const affected = getBoosterAffectedCells(booster);
-      setSuperballAnimation({ booster, affectedCells: affected, phase: 'buildup' });
-      audio.play('superballCharge', undefined, 0.8);
-
-      // After buildup animation (1.5s), explode
-      setTimeout(() => {
-        setSuperballAnimation(null);
-        audio.play('superball', 0.25);
-        executeBoosterExplosion(booster);
-      }, 1500);
-      return;
-    }
-
-    // Calculate affected cells for visual indicator
-    const previewCells = getBoosterAffectedCells(booster);
-    const previewColor = booster.type === 'rocket_h' || booster.type === 'rocket_v' ? 'rgba(239, 68, 68, 0.3)'
-      : booster.type === 'line_bomb' ? 'rgba(59, 130, 246, 0.3)'
-      : booster.type === 'bomb' ? 'rgba(249, 115, 22, 0.3)'
-      : 'rgba(168, 85, 247, 0.3)';
-
-    // Show affected area indicator (will fade out via CSS)
-    setAffectedCells(previewCells);
-    setAffectedColor(previewColor);
-
-    // Clear indicator after fade animation
-    setTimeout(() => {
-      setAffectedCells(new Set());
-      setAffectedColor('transparent');
-    }, 400);
-
-    // Execute explosion immediately (simultaneous with indicator)
-    audio.play('activateBooster', 0.15);
-    executeBoosterExplosion(booster);
-  };
-
-  // Get points affected by a booster explosion
-  const getBoosterExplosionPoints = (booster: Booster, grid: (typeof gameState.grid)): Point[] => {
-    const points: Point[] = [];
-    if (booster.type === 'rocket_h') {
-      // Entire row
-      for (let i = 0; i < GRID_SIZE; i++) {
-        points.push({ x: i, y: booster.y });
-      }
-    } else if (booster.type === 'rocket_v') {
-      // Entire column
-      for (let i = 0; i < GRID_SIZE; i++) {
-        points.push({ x: booster.x, y: i });
-      }
-    } else if (booster.type === 'line_bomb') {
-      for (let i = 0; i < GRID_SIZE; i++) {
-        points.push({ x: i, y: booster.y }); // Row
-        if (i !== booster.y) points.push({ x: booster.x, y: i }); // Column
-      }
-    } else if (booster.type === 'bomb') {
-      // 8 neighbors + center
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const nx = booster.x + dx;
-          const ny = booster.y + dy;
-          if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE) {
-            points.push({ x: nx, y: ny });
-          }
-        }
-      }
-    } else if (booster.type === 'color_ball') {
-      const targetColor = resolveSuperballTargetColor(grid, booster.color);
-      if (targetColor) {
-        for (let y = 0; y < GRID_SIZE; y++) {
-          for (let x = 0; x < GRID_SIZE; x++) {
-            if (grid[y][x]?.color === targetColor) {
-              points.push({ x, y });
-            }
-          }
-        }
-      }
-      points.push({ x: booster.x, y: booster.y }); // Include booster position
-    }
-    return points;
-  };
-
-  // Execute the actual booster explosion with CHAIN REACTIONS
-  const executeBoosterExplosion = (initialBooster: Booster) => {
-    const newGrid = gameState.grid.map(row => [...row]);
-    let currentBoosters = [...gameState.boosters];
-    let allPointsToRemove: Point[] = [];
-    let totalScore = 0;
-    let chainCount = 0;
-
-    // Queue of boosters to explode
-    const boosterQueue: Booster[] = [initialBooster];
-    const explodedBoosterIds = new Set<string>();
-
-    while (boosterQueue.length > 0) {
-      const booster = boosterQueue.shift()!;
-      if (explodedBoosterIds.has(booster.id)) continue;
-      explodedBoosterIds.add(booster.id);
-      chainCount++;
-
-      let effectText = '';
-      let bonusMultiplier = 1;
-
-      if (booster.type === 'line_bomb') {
-        effectText = '💣 LINE BLAST!';
-        bonusMultiplier = 1.5;
-      } else if (booster.type === 'bomb') {
-        effectText = '💥 BOOM!';
-        bonusMultiplier = 2;
-      } else if (booster.type === 'color_ball') {
-        effectText = '⚡ COLOR BLAST!';
-        bonusMultiplier = 3;
-      }
-
-      const pointsFromThisBooster = getBoosterExplosionPoints(booster, newGrid);
-
-      // Spawn visuals for this booster
-      if (boardRef.current) {
-        const boosterMetrics = getCellMetrics(booster.x, booster.y);
-        if (!boosterMetrics) continue;
-        const boosterCenterX = boosterMetrics.centerX;
-        const boosterCenterY = boosterMetrics.centerY;
-
-        // Particles for the booster itself (5 colors burst for superball)
-        if (booster.type === 'color_ball') {
-          const gameColors = ['#3b82f6', '#22c55e', '#a855f7', '#eab308', '#f97316']; // Blue, Green, Purple, Yellow, Orange
-          for (let i = 0; i < 4; i++) {
-            setTimeout(() => {
-              gameColors.forEach(color => {
-                spawnParticles(boosterCenterX, boosterCenterY, color, 6, 0.5);
-              });
-            }, i * 40);
-          }
-        }
-
-        // Particles for each exploded block
-        pointsFromThisBooster.forEach(p => {
-          const tile = newGrid[p.y]?.[p.x];
-          if (tile) {
-            const metrics = getCellMetrics(p.x, p.y);
-            if (metrics) {
-              spawnParticles(metrics.centerX, metrics.centerY, tile.color, 8);
-            }
-          }
-        });
-
-        spawnFloatingText(boosterCenterX, boosterCenterY - 20, effectText);
-        if (chainCount > 1) {
-          spawnFloatingText(boosterCenterX, boosterCenterY + 30, `CHAIN x${chainCount}!`);
-        }
-      }
-
-      // Check for OTHER boosters in the explosion radius
-      pointsFromThisBooster.forEach(p => {
-        const hitBooster = currentBoosters.find(b => b.x === p.x && b.y === p.y && !explodedBoosterIds.has(b.id));
-        if (hitBooster) {
-          boosterQueue.push(hitBooster);
-        }
-      });
-
-      // Collect points - unlock locked tiles, remove unlocked ones
-      let tilesCleared = 0;
-      pointsFromThisBooster.forEach(p => {
-        const tile = newGrid[p.y]?.[p.x];
-        if (tile) {
-          if (tile.locked) {
-            // Unlock the tile instead of removing it
-            newGrid[p.y][p.x] = { ...tile, locked: false };
-            // Spawn unlock visual
-            if (boardRef.current) {
-              const metrics = getCellMetrics(p.x, p.y);
-              if (metrics) {
-                spawnFloatingText(metrics.centerX, metrics.centerY, '🔓');
-              }
-            }
-          } else {
-            // Remove unlocked tile
-            if (!allPointsToRemove.some(cp => cp.x === p.x && cp.y === p.y)) {
-              allPointsToRemove.push(p);
-              tilesCleared++;
-            }
-          }
-        }
-      });
-
-      totalScore += Math.round(tilesCleared * 15 * bonusMultiplier);
-
-      // Remove booster from list
-      currentBoosters = currentBoosters.filter(b => b.id !== booster.id);
-    }
-
-    // Count colors for objectives
-    const colorCounts: Record<string, number> = {};
-    allPointsToRemove.forEach(p => {
-      const tile = newGrid[p.y][p.x];
-      if (tile) {
-        colorCounts[tile.color] = (colorCounts[tile.color] || 0) + 1;
-      }
+    dispatchDestructionRequest({
+      kind: 'booster',
+      source: 'click',
+      boosterId: booster.id
     });
-
-    // Update objectives
-    const newObjectives = gameState.objectives.map(obj => ({
-      ...obj,
-      current: Math.min(obj.target, obj.current + (colorCounts[obj.color] || 0))
-    }));
-
-    const isLevelComplete = newObjectives.slice(0, 2).every(obj => obj.current >= obj.target);
-
-    // Collect IDs for animation
-    const matchingIds = allPointsToRemove.map(p => newGrid[p.y][p.x]?.id).filter(Boolean) as string[];
-
-    // Show total score
-    if (boardRef.current && allPointsToRemove.length > 0) {
-      const avgX = allPointsToRemove.reduce((acc, p) => acc + p.x, 0) / allPointsToRemove.length;
-      const avgY = allPointsToRemove.reduce((acc, p) => acc + p.y, 0) / allPointsToRemove.length;
-      const board = boardRef.current;
-      const centerMetrics = getBoardCellMetrics(board, avgX, avgY);
-      spawnFloatingText(centerMetrics.centerX, centerMetrics.centerY, `+${totalScore}`);
-    }
-
-    triggerShake();
-
-    setGameState(prev => ({
-      ...prev,
-      grid: newGrid,
-      boosters: currentBoosters,
-      score: prev.score + totalScore,
-      clearingTiles: matchingIds,
-      objectives: newObjectives,
-      levelComplete: isLevelComplete
-    }));
-
-    // Remove tiles after animation
-    setTimeout(() => {
-      setGameState(prev => {
-        let finalGrid = prev.grid.map(row => [...row]);
-        allPointsToRemove.forEach(p => {
-          finalGrid[p.y][p.x] = null;
-        });
-
-        // Check for ALL CLEAR
-        if (isGridEmpty(finalGrid, prev.boosters)) {
-          setTimeout(() => handleAllClear(), 100);
-          return {
-            ...prev,
-            grid: finalGrid,
-            clearingTiles: []
-          };
-        }
-
-        // Check if only boosters remain - spawn new tiles if objectives not complete
-        if (hasOnlyBoostersLeft(finalGrid, prev.boosters) && !prev.levelComplete) {
-          setTimeout(() => handleOnlyBoostersLeft(), 100);
-          return { ...prev, grid: finalGrid, clearingTiles: [] };
-        }
-
-        // Booster counts as "match" - no new blocks added
-        const lost = !prev.levelComplete && isGameOver(finalGrid, prev.hand, prev.boosters);
-        return {
-          ...prev,
-          grid: finalGrid,
-          clearingTiles: [],
-          gameOver: lost
-        };
-      });
-    }, 400);
   };
 
   // Execute trash - refresh all 3 pieces with shake + explode animation
@@ -2314,7 +2206,7 @@ export const Game: React.FC = () => {
 
   // Activate trash powerup
   const activateTrash = () => {
-    if (isInteractionLocked) return;
+    if (isGameplayInputLocked) return;
     if (trashUses > 0) {
       setTrashUses(prev => prev - 1);
       executeTrash();
@@ -2631,7 +2523,7 @@ export const Game: React.FC = () => {
 
   // Handle shuffle powerup
   const activateShuffle = () => {
-    if (isInteractionLocked) return;
+    if (isGameplayInputLocked) return;
     if (shuffleUses <= 0 || shufflePhase || !boardRef.current) return;
     setShuffleUses(prev => prev - 1);
 
@@ -3002,7 +2894,7 @@ export const Game: React.FC = () => {
   // Auto-resolve matches generated by system actions (level formation/spawn/shuffle)
   // so they don't require an extra user move to trigger.
   useEffect(() => {
-    if (isInteractionLocked || showLoadingScreen || isIntroArrivalActive || introRequest) return;
+    if (isGameplayInputLocked || showLoadingScreen || isIntroArrivalActive || introRequest) return;
     if (gameState.gameOver || gameState.levelComplete) return;
     if (gameState.clearingTiles.length > 0) return;
     if (shuffleAnimations.length > 0 || shufflePhase || superballAnimation) return;
@@ -3024,7 +2916,7 @@ export const Game: React.FC = () => {
     gameState.grid,
     gameState.levelComplete,
     introRequest,
-    isInteractionLocked,
+    isGameplayInputLocked,
     isIntroArrivalActive,
     showAllClear,
     showLevelPopup,
@@ -3038,7 +2930,7 @@ export const Game: React.FC = () => {
   // This prevents stale states where no piece fits but game-over is not shown
   // until the next user interaction.
   useEffect(() => {
-    if (isInteractionLocked || showLoadingScreen || isIntroArrivalActive || introRequest) return;
+    if (isGameplayInputLocked || showLoadingScreen || isIntroArrivalActive || introRequest) return;
     if (gameState.gameOver || gameState.levelComplete) return;
     if (gameState.clearingTiles.length > 0) return;
     if (shuffleAnimations.length > 0 || shufflePhase || superballAnimation) return;
@@ -3061,7 +2953,7 @@ export const Game: React.FC = () => {
     gameState.hand,
     gameState.levelComplete,
     introRequest,
-    isInteractionLocked,
+    isGameplayInputLocked,
     isIntroArrivalActive,
     showAllClear,
     showLevelPopup,
@@ -3073,7 +2965,7 @@ export const Game: React.FC = () => {
   ]);
 
   const startDragging = (e: React.PointerEvent, index: number) => {
-    if (isInteractionLocked) return;
+    if (isGameplayInputLocked) return;
     if (gameState.hand[index] === null || gameState.gameOver || celebrating || showLevelPopup || showAllClear || trashingAllPieces) return;
 
     // Calculate cell size based on actual board dimensions
@@ -3092,7 +2984,7 @@ export const Game: React.FC = () => {
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
-    if (isInteractionLocked) return;
+    if (isGameplayInputLocked) return;
     if (gameState.selectedPieceIndex === null || gameState.gameOver) return;
 
     // Calculate velocity for jelly effect - use raw delta, more responsive
@@ -3139,7 +3031,7 @@ export const Game: React.FC = () => {
   };
 
   const stopDragging = (e: React.PointerEvent) => {
-    if (isInteractionLocked) return;
+    if (isGameplayInputLocked) return;
     if (gameState.selectedPieceIndex === null) return;
 
     const pieceIndex = gameState.selectedPieceIndex;
@@ -4139,7 +4031,7 @@ export const Game: React.FC = () => {
           style={{
             padding: `${responsive.boardInnerPadding}px`,
             marginBottom: `${responsive.layoutGap}px`,
-            zIndex: deleteBlockMode || wildcardMode ? 60 : (shufflePhase || superballAnimation ? 40 : undefined)
+            zIndex: deleteBlockMode || wildcardMode ? 60 : (shufflePhase || superballAnimations.length > 0 ? 40 : undefined)
           }}
         >
         <div
@@ -4151,7 +4043,9 @@ export const Game: React.FC = () => {
               const ghost = isGhostCell(x, y);
               const booster = gameState.boosters.find(b => b.x === x && b.y === y);
               const isAffected = affectedCells.has(`${x},${y}`);
-              const isSuperballTarget = superballAnimation && superballAnimation.affectedCells.has(`${x},${y}`) && !(booster?.type === 'color_ball');
+              const isSuperballTarget = superballAnimations.some(
+                (animation) => animation.affectedCells.has(`${x},${y}`)
+              ) && !(booster?.type === 'color_ball');
 
               // Determine if we should use an image
               const cellColor = cell?.color;
@@ -4221,7 +4115,7 @@ export const Game: React.FC = () => {
                   key={`${x}-${y}`}
                   data-cell={`${x},${y}`}
                   onClick={() => {
-                    if (isInteractionLocked) return;
+                    if (isGameplayInputLocked) return;
                     if (deleteBlockMode && cell && !booster) {
                       handleDeleteBlock(x, y);
                     } else if (wildcardMode && cell && !booster) {
@@ -4232,7 +4126,7 @@ export const Game: React.FC = () => {
                   }}
                   className={`
                     relative
-                    ${booster && !hideStaticForIntro && !isBoosterFlying && !shufflePhase && !deleteBlockMode && !wildcardMode && !superballAnimation ? 'cursor-pointer active:scale-95' : ''}
+                    ${booster && !hideStaticForIntro && !isBoosterFlying && !shufflePhase && !deleteBlockMode && !wildcardMode && superballAnimations.length === 0 ? 'cursor-pointer active:scale-95' : ''}
                     ${deleteBlockMode && cell && !booster ? 'cursor-pointer z-50 hover:scale-110 hover:brightness-125' : ''}
                     ${wildcardMode && cell && !booster ? 'cursor-pointer z-50 hover:scale-110 hover:brightness-125' : ''}
                     ${shufflePhase === 'levitating' && cell ? 'z-20 shadow-lg' : ''}
@@ -4290,18 +4184,25 @@ export const Game: React.FC = () => {
                       style={booster.type === 'color_ball' ? {} : { animation: 'pulse 1s ease-in-out infinite' }}
                     >
                       {booster.type === 'color_ball' ? (
-                        <img
-                          src={UI_ASSETS.SUPERBALL}
-                          alt="Superball"
-                          className={`w-[85%] h-[85%] object-contain ${superballAnimation?.booster.id === booster.id ? 'superball-buildup' : ''}`}
-                          style={{
-                            visibility: superballAnimation?.phase === 'buildup' && superballAnimation.booster.id === booster.id ? 'hidden' : 'visible',
-                            filter: 'none',
-                            animation: superballAnimation?.booster.id === booster.id
-                              ? 'superballBuildup 1.5s ease-in forwards'
-                              : 'none'
-                          }}
-                        />
+                        (() => {
+                          const activeAnimation = superballAnimations.find(
+                            (animation) => animation.booster.id === booster.id
+                          );
+                          return (
+                            <img
+                              src={UI_ASSETS.SUPERBALL}
+                              alt="Superball"
+                              className={`w-[85%] h-[85%] object-contain ${activeAnimation ? 'superball-buildup' : ''}`}
+                              style={{
+                                visibility: activeAnimation ? 'hidden' : 'visible',
+                                filter: 'none',
+                                animation: activeAnimation
+                                  ? 'superballBuildup 1.5s ease-in forwards'
+                                  : 'none'
+                              }}
+                            />
+                          );
+                        })()
                       ) : (
                         <div
                           className="w-[85%] h-[85%] rounded-xl flex items-center justify-center"
@@ -4597,8 +4498,8 @@ export const Game: React.FC = () => {
       >
         {/* Delete Block Button */}
         <button
-          onClick={() => !isInteractionLocked && deleteBlockUses > 0 && !shufflePhase && !trashingAllPieces && !deleteBlockMode && !wildcardMode && setDeleteBlockMode(true)}
-          disabled={isInteractionLocked || deleteBlockUses <= 0 || !!shufflePhase || trashingAllPieces || deleteBlockMode || wildcardMode}
+          onClick={() => !isGameplayInputLocked && deleteBlockUses > 0 && !shufflePhase && !trashingAllPieces && !deleteBlockMode && !wildcardMode && setDeleteBlockMode(true)}
+          disabled={isGameplayInputLocked || deleteBlockUses <= 0 || !!shufflePhase || trashingAllPieces || deleteBlockMode || wildcardMode}
           className={`
             rounded-full flex items-center justify-center relative
             transition-all duration-200 active:scale-95
@@ -4625,8 +4526,8 @@ export const Game: React.FC = () => {
 
         {/* Wildcard Button */}
         <button
-          onClick={() => !isInteractionLocked && wildcardUses > 0 && !shufflePhase && !trashingAllPieces && !deleteBlockMode && !wildcardMode && setWildcardMode(true)}
-          disabled={isInteractionLocked || wildcardUses <= 0 || !!shufflePhase || trashingAllPieces || deleteBlockMode || wildcardMode}
+          onClick={() => !isGameplayInputLocked && wildcardUses > 0 && !shufflePhase && !trashingAllPieces && !deleteBlockMode && !wildcardMode && setWildcardMode(true)}
+          disabled={isGameplayInputLocked || wildcardUses <= 0 || !!shufflePhase || trashingAllPieces || deleteBlockMode || wildcardMode}
           className={`
             rounded-full flex items-center justify-center relative
             transition-all duration-200 active:scale-95
@@ -4653,8 +4554,8 @@ export const Game: React.FC = () => {
 
         {/* Shuffle Button */}
         <button
-          onClick={() => !isInteractionLocked && shuffleUses > 0 && !shufflePhase && !trashingAllPieces && !deleteBlockMode && !wildcardMode && activateShuffle()}
-          disabled={isInteractionLocked || shuffleUses <= 0 || !!shufflePhase || trashingAllPieces || deleteBlockMode || wildcardMode}
+          onClick={() => !isGameplayInputLocked && shuffleUses > 0 && !shufflePhase && !trashingAllPieces && !deleteBlockMode && !wildcardMode && activateShuffle()}
+          disabled={isGameplayInputLocked || shuffleUses <= 0 || !!shufflePhase || trashingAllPieces || deleteBlockMode || wildcardMode}
           className={`
             rounded-full flex items-center justify-center relative
             transition-all duration-200 active:scale-95
@@ -4681,8 +4582,8 @@ export const Game: React.FC = () => {
 
         {/* Refresh Button (was Trash) */}
         <button
-          onClick={() => !isInteractionLocked && trashUses > 0 && !shufflePhase && !trashingAllPieces && !deleteBlockMode && !wildcardMode && activateTrash()}
-          disabled={isInteractionLocked || trashUses <= 0 || !!shufflePhase || trashingAllPieces || deleteBlockMode || wildcardMode}
+          onClick={() => !isGameplayInputLocked && trashUses > 0 && !shufflePhase && !trashingAllPieces && !deleteBlockMode && !wildcardMode && activateTrash()}
+          disabled={isGameplayInputLocked || trashUses <= 0 || !!shufflePhase || trashingAllPieces || deleteBlockMode || wildcardMode}
           className={`
             rounded-full flex items-center justify-center relative
             transition-all duration-200 active:scale-95
@@ -4731,20 +4632,24 @@ export const Game: React.FC = () => {
       )}
 
       {/* Superball Animation Overlay with Lightning Rays */}
-      {superballAnimation?.phase === 'buildup' && (
+      {superballAnimations.length > 0 && (
         <>
           <PowerupDarkOverlay opacity={0.7} zIndex={30} pointerEvents="none" />
-          <LightningRays
-            key={`lightning-${superballAnimation.booster.id}-${superballAnimation.phase}`}
-            booster={superballAnimation.booster}
-            affectedCells={superballAnimation.affectedCells}
-            boardRef={boardRef}
-            phase={superballAnimation.phase}
-          />
-          <SuperballForeground
-            superballAnimation={superballAnimation}
-            boardRef={boardRef}
-          />
+          {superballAnimations.map((animation) => (
+            <React.Fragment key={`superball-overlay-${animation.booster.id}`}>
+              <LightningRays
+                key={`lightning-${animation.booster.id}-${animation.phase}`}
+                booster={animation.booster}
+                affectedCells={animation.affectedCells}
+                boardRef={boardRef}
+                phase={animation.phase}
+              />
+              <SuperballForeground
+                superballAnimation={animation}
+                boardRef={boardRef}
+              />
+            </React.Fragment>
+          ))}
         </>
       )}
 
