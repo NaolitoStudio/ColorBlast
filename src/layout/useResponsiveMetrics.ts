@@ -86,6 +86,11 @@ type MetricInput = {
 const readViewportBottomInset = (): number => {
   if (typeof window === 'undefined' || !window.visualViewport) return 0;
   const vv = window.visualViewport;
+  // When visualViewport is present, vv.height already reflects browser UI loss
+  // (address bar/tab strip). Adding the innerHeight delta again can double count
+  // and push fixed bottom UI (powerups) too high.
+  // We only keep an inset when the viewport itself is shifted (e.g. some IME cases).
+  if (vv.offsetTop <= 0.5) return 0;
   return Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
 };
 
