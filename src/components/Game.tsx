@@ -63,6 +63,12 @@ type LayoutDebugOverrides = {
   boardPaddingMultiplier: number;
 };
 
+const DEFAULT_LAYOUT_DEBUG_OVERRIDES: LayoutDebugOverrides = {
+  spacerAspect: 75,
+  nineSliceScaleMultiplier: 1,
+  boardPaddingMultiplier: 0.7,
+};
+
 const sanitizeLayoutAspect = (value: number): number => {
   if (!Number.isFinite(value)) return LAYOUT_DEBUG_MIN_ASPECT;
   return Math.max(LAYOUT_DEBUG_MIN_ASPECT, Math.min(LAYOUT_DEBUG_MAX_ASPECT, Math.round(value)));
@@ -77,7 +83,7 @@ const mapSpacerControlToAspect = (value: number): number => {
 };
 
 const sanitizeNineSliceScaleMultiplier = (value: number): number => {
-  if (!Number.isFinite(value)) return 1;
+  if (!Number.isFinite(value)) return DEFAULT_LAYOUT_DEBUG_OVERRIDES.nineSliceScaleMultiplier;
   const clamped = Math.max(
     NINESLICE_SCALE_MULTIPLIER_MIN,
     Math.min(NINESLICE_SCALE_MULTIPLIER_MAX, value)
@@ -86,7 +92,7 @@ const sanitizeNineSliceScaleMultiplier = (value: number): number => {
 };
 
 const sanitizeBoardPaddingMultiplier = (value: number): number => {
-  if (!Number.isFinite(value)) return 1;
+  if (!Number.isFinite(value)) return DEFAULT_LAYOUT_DEBUG_OVERRIDES.boardPaddingMultiplier;
   const clamped = Math.max(
     BOARD_PADDING_MULTIPLIER_MIN,
     Math.min(BOARD_PADDING_MULTIPLIER_MAX, value)
@@ -106,7 +112,9 @@ const sanitizeLayoutDebugOverrides = (
     spacerAspect: sanitizeLayoutAspect(spacerAspect),
     nineSliceScaleMultiplier: sanitizeNineSliceScaleMultiplier(nineSliceScaleMultiplier),
     boardPaddingMultiplier: sanitizeBoardPaddingMultiplier(
-      typeof boardPaddingMultiplier === 'number' ? boardPaddingMultiplier : 1
+      typeof boardPaddingMultiplier === 'number'
+        ? boardPaddingMultiplier
+        : DEFAULT_LAYOUT_DEBUG_OVERRIDES.boardPaddingMultiplier
     ),
   };
 };
@@ -789,17 +797,16 @@ export const Game: React.FC = () => {
 
   const appliedLayoutDebugOverrides = useMemo<LayoutDebugOverrides>(() => ({
     spacerAspect: sanitizeLayoutAspect(
-      layoutDebugOverrides?.spacerAspect ?? themeSpacerBaseAspect
+      layoutDebugOverrides?.spacerAspect ?? DEFAULT_LAYOUT_DEBUG_OVERRIDES.spacerAspect
     ),
     nineSliceScaleMultiplier: sanitizeNineSliceScaleMultiplier(
-      layoutDebugOverrides?.nineSliceScaleMultiplier ?? 1
+      layoutDebugOverrides?.nineSliceScaleMultiplier ?? DEFAULT_LAYOUT_DEBUG_OVERRIDES.nineSliceScaleMultiplier
     ),
     boardPaddingMultiplier: sanitizeBoardPaddingMultiplier(
-      layoutDebugOverrides?.boardPaddingMultiplier ?? 1
+      layoutDebugOverrides?.boardPaddingMultiplier ?? DEFAULT_LAYOUT_DEBUG_OVERRIDES.boardPaddingMultiplier
     ),
   }), [
     layoutDebugOverrides,
-    themeSpacerBaseAspect,
   ]);
 
   const effectiveSpacerHeaderBoardAspect = useMemo(() => {
