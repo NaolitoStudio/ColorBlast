@@ -146,18 +146,18 @@ type LayoutDebugOverrides = {
 };
 
 const DEFAULT_LAYOUT_DEBUG_OVERRIDES: LayoutDebugOverrides = {
-  spacerAspect: 75,
-  headerAspectRatio: 5,
-  subheaderAspectRatio: 8.5,
+  spacerAspect: 8,
+  headerAspectRatio: 7,
+  subheaderAspectRatio: 10,
   subheaderActive: true,
-  subheaderPaddingOffset: 0,
+  subheaderPaddingOffset: -20,
   subheaderContainerOpacity: 0,
   subheaderShowContent: true,
-  nineSliceScaleMultiplier: 1,
-  boardPaddingMultiplier: 0.7,
-  powerupSizeMultiplier: 1,
-  powerupBubbleSizeMultiplier: 1,
-  powerupGapMultiplier: 1,
+  nineSliceScaleMultiplier: 1.1,
+  boardPaddingMultiplier: 0.67,
+  powerupSizeMultiplier: 0.74,
+  powerupBubbleSizeMultiplier: 1.17,
+  powerupGapMultiplier: 1.62,
 };
 
 const sanitizeLayoutAspect = (value: number): number => {
@@ -1190,6 +1190,7 @@ export const Game: React.FC = () => {
     minLoadingMs: number;
     showLoadingOverlay: boolean;
   } | null>(null);
+  const onlyBoostersRefillInProgressRef = useRef(false);
   const pendingAllClearAfterDestructionRef = useRef(false);
   const pendingOnlyBoostersAfterDestructionRef = useRef(false);
   const isGameplayInputLocked = isInteractionLocked || destructionRuntime.destructionLock;
@@ -1710,70 +1711,91 @@ export const Game: React.FC = () => {
     return true; // No tiles but boosters exist
   };
 
-  // Handle case when only boosters remain - spawn new tiles if objectives not complete
-  const handleOnlyBoostersLeft = () => {
-    setGameState(prev => {
-      if (prev.levelComplete) return prev;
+  // Handle case when only boosters remain using the same ALL CLEAR cadence:
+  // show feedback, wait, then refill through incoming animation (no instant pop-in).
+  const handleOnlyBoostersLeft = useCallback(() => {
+    if (onlyBoostersRefillInProgressRef.current) return;
+    onlyBoostersRefillInProgressRef.current = true;
 
-      // Regenerate tiles around boosters, avoiding booster positions
-      const boosterPositions = new Set(prev.boosters.map(b => `${b.x},${b.y}`));
-      const levelConfig = getLevelConfig(prev.level);
-      const levelColors = getColorsForLevel(prev.level);
+    setShowAllClear(true);
+    triggerShake();
+    audio.play('allClear');
 
-      const newGrid: (typeof prev.grid) = prev.grid.map(row => [...row]);
+    if (boardRef.current) {
+      const rect = boardRef.current.getBoundingClientRect();
+      const colors = ['#ef4444', '#3b82f6', '#22c55e', '#eab308', '#a855f7', '#f97316'];
+      for (let i = 0; i < 20; i++) {
+        const x = rect.left + Math.random() * rect.width;
+        const y = rect.top + Math.random() * rect.height;
+        spawnParticles(x, y, colors[Math.floor(Math.random() * colors.length)], 2);
+      }
+    }
 
-      // Fill empty cells (not occupied by boosters) with new tiles
-      for (let y = 0; y < GRID_SIZE; y++) {
-        for (let x = 0; x < GRID_SIZE; x++) {
-          if (newGrid[y][x] === null && !boosterPositions.has(`${x},${y}`)) {
-            if (Math.random() < levelConfig.gridFill) {
-              newGrid[y][x] = {
+    window.setTimeout(() => {
+      setShowAllClear(false);
+      setGameState(prev => {
+        if (prev.levelComplete) {
+          onlyBoostersRefillInProgressRef.current = false;
+          return prev;
+        }
+
+        // Regenerate tiles around existing boosters, avoiding booster positions.
+        const boosterPositions = new Set(prev.boosters.map((b) => `${b.x},${b.y}`));
+        const levelConfig = getLevelConfig(prev.level);
+        const levelColors = getColorsForLevel(prev.level);
+        const newGrid: (typeof prev.grid) = prev.grid.map((row) => [...row]);
+        const addedBlocks: AddedBlock[] = [];
+
+        for (let y = 0; y < GRID_SIZE; y++) {
+          for (let x = 0; x < GRID_SIZE; x++) {
+            if (newGrid[y][x] === null && !boosterPositions.has(`${x},${y}`) && Math.random() < levelConfig.gridFill) {
+              const tile = {
                 color: levelColors[Math.floor(Math.random() * levelColors.length)],
                 id: `regen-${Date.now()}-${x}-${y}`
               };
+              newGrid[y][x] = tile;
+              addedBlocks.push({ x, y, color: tile.color, id: tile.id });
             }
           }
         }
-      }
 
-      // Ensure we spawned at least some tiles
-      let tileCount = 0;
-      for (let y = 0; y < GRID_SIZE; y++) {
-        for (let x = 0; x < GRID_SIZE; x++) {
-          if (newGrid[y][x] !== null) tileCount++;
-        }
-      }
-
-      // If too few tiles, force spawn more
-      if (tileCount < 10) {
-        const emptyPositions: { x: number; y: number }[] = [];
-        for (let y = 0; y < GRID_SIZE; y++) {
-          for (let x = 0; x < GRID_SIZE; x++) {
-            if (newGrid[y][x] === null && !boosterPositions.has(`${x},${y}`)) {
-              emptyPositions.push({ x, y });
+        if (addedBlocks.length < 10) {
+          const emptyPositions: { x: number; y: number }[] = [];
+          for (let y = 0; y < GRID_SIZE; y++) {
+            for (let x = 0; x < GRID_SIZE; x++) {
+              if (newGrid[y][x] === null && !boosterPositions.has(`${x},${y}`)) {
+                emptyPositions.push({ x, y });
+              }
             }
           }
+          emptyPositions.sort(() => Math.random() - 0.5);
+          for (let i = 0; i < Math.min(15, emptyPositions.length) && addedBlocks.length < 15; i++) {
+            const pos = emptyPositions[i];
+            const tile = {
+              color: levelColors[Math.floor(Math.random() * levelColors.length)],
+              id: `regen-${Date.now()}-${pos.x}-${pos.y}`
+            };
+            newGrid[pos.y][pos.x] = tile;
+            addedBlocks.push({ x: pos.x, y: pos.y, color: tile.color, id: tile.id });
+          }
         }
-        // Shuffle and fill first 15 positions
-        emptyPositions.sort(() => Math.random() - 0.5);
-        for (let i = 0; i < Math.min(15, emptyPositions.length); i++) {
-          const pos = emptyPositions[i];
-          newGrid[pos.y][pos.x] = {
-            color: levelColors[Math.floor(Math.random() * levelColors.length)],
-            id: `regen-${Date.now()}-${pos.x}-${pos.y}`
-          };
+
+        const newHand = generateValidHand(newGrid, prev.level);
+        if (addedBlocks.length > 0) {
+          pendingIncomingBlocksRef.current = addedBlocks;
         }
-      }
 
-      const newHand = generateValidHand(newGrid, prev.level);
-
-      return {
-        ...prev,
-        grid: newGrid,
-        hand: newHand
-      };
-    });
-  };
+        onlyBoostersRefillInProgressRef.current = false;
+        return {
+          ...prev,
+          grid: newGrid,
+          hand: newHand,
+          combo: prev.combo + 1,
+          gameOver: false
+        };
+      });
+    }, 1500);
+  }, [audio, triggerShake]);
 
   // Handle ALL CLEAR - regenerate grid if objectives not complete
   const handleAllClear = () => {
@@ -1845,7 +1867,7 @@ export const Game: React.FC = () => {
 
     if (pendingOnlyBoostersAfterDestructionRef.current) {
       pendingOnlyBoostersAfterDestructionRef.current = false;
-      setTimeout(() => handleOnlyBoostersLeft(), 120);
+      setTimeout(() => handleOnlyBoostersLeft(), POST_DESTRUCTION_ALL_CLEAR_DELAY_MS);
     }
   }, [handleAllClear, handleOnlyBoostersLeft]);
 

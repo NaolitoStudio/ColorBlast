@@ -14,8 +14,8 @@
     "spacerHeaderBoardAspect": 28,
     "spacerBoardRackAspect": 24,
     "layoutDebugSpacerAspect": 8,
-    "layoutDebugNineSliceScaleMultiplier": 1,
-    "layoutDebugBoardPaddingMultiplier": 0.7,
+    "layoutDebugNineSliceScaleMultiplier": 1.1,
+    "layoutDebugBoardPaddingMultiplier": 0.67,
     "layoutDebugPowerupSizeMultiplier": 0.74,
     "layoutDebugPowerupBubbleSizeMultiplier": 1.17,
     "layoutDebugPowerupGapMultiplier": 1.62
