@@ -69,4 +69,7 @@ export interface GameState {
   level: number;
   objectives: LevelObjective[];
   levelComplete: boolean;
+  lives: number;
+  coins: number;
+  stars: number;
 }

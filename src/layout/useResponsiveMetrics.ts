@@ -1,4 +1,4 @@
-import { RefObject, useEffect, useState } from 'react';
+import { RefObject, useEffect, useRef, useState } from 'react';
 import { solveProportionalStack } from './panelStack';
 import { estimateNineSliceBaseBorderWidth, resolveNineSliceDensityFactor } from '../theme/nineSliceMath';
 
@@ -32,6 +32,7 @@ export type ResponsiveMetrics = {
   powerupBottomPadding: number;
   reservedBottomSpace: number;
   viewportHeight: number;
+  isViewportStable: boolean;
 };
 
 type UseResponsiveMetricsArgs = {
@@ -63,6 +64,7 @@ type MetricInput = {
   boardPanelDprMinFactor: number;
   boardPanelDprMaxFactor: number;
   rackSlotAspect: number;
+  isViewportStable: boolean;
 };
 
 const readViewportBottomInset = (): number => {
@@ -91,6 +93,7 @@ const createMetrics = ({
   boardPanelDprMinFactor,
   boardPanelDprMaxFactor,
   rackSlotAspect,
+  isViewportStable,
 }: MetricInput): ResponsiveMetrics => {
   const safeWidth = Math.max(1, layoutWidth);
   const safeHeight = Math.max(1, layoutHeight);
@@ -126,7 +129,7 @@ const createMetrics = ({
     powerupTopPadding +
     powerupBottomPadding +
     powerupButtonSize +
-    (layoutGap * 0.55);
+    (layoutGap * 0.8);
 
   const availableForMainContent = Math.max(
     0,
@@ -220,6 +223,7 @@ const createMetrics = ({
     powerupBottomPadding,
     reservedBottomSpace,
     viewportHeight: safeHeight,
+    isViewportStable,
   };
 };
 
@@ -268,24 +272,29 @@ export const useResponsiveMetrics = ({
       boardPanelDprMinFactor,
       boardPanelDprMaxFactor,
       rackSlotAspect,
+      isViewportStable: true,
     });
   });
 
+  const stabilityTimerRef = useRef<number | null>(null);
+  const lastHeightRef = useRef<number | null>(null);
+  const isCheckingStabilityRef = useRef(false);
+
   useEffect(() => {
-    const compute = () => {
+    const compute = (overrideStable?: boolean) => {
       const layoutNode = layoutRef.current;
       // We prioritize the visual viewport, then window inner dimensions.
       // We only use layoutNode.clientDims as a last resort fallback,
       // avoiding the feedback loop where setting height on the node locks the measurement.
       const vv = window.visualViewport;
-      
+
       const layoutWidth = vv ? Math.round(vv.width) : (window.innerWidth || layoutNode?.clientWidth || 0);
       const layoutHeight = vv ? Math.round(vv.height) : (window.innerHeight || layoutNode?.clientHeight || 0);
 
       if (layoutWidth <= 0 || layoutHeight <= 0) return;
 
       const headerHeight = headerRef.current?.offsetHeight ?? 0;
-      setMetrics(createMetrics({
+      setMetrics((prev) => createMetrics({
         layoutWidth,
         layoutHeight,
         headerHeight,
@@ -299,7 +308,42 @@ export const useResponsiveMetrics = ({
         boardPanelDprMinFactor,
         boardPanelDprMaxFactor,
         rackSlotAspect,
+        isViewportStable: overrideStable !== undefined ? overrideStable : prev.isViewportStable,
       }));
+    };
+
+    const checkStability = () => {
+      const vv = window.visualViewport;
+      if (!vv) {
+        isCheckingStabilityRef.current = false;
+        return;
+      }
+
+      const currentHeight = vv.height;
+      const lastHeight = lastHeightRef.current;
+
+      if (lastHeight !== null && Math.abs(currentHeight - lastHeight) > 1) {
+        // Viewport cambiando - marcar como inestable y recalcular
+        compute(false);
+
+        // Limpiar timer existente
+        if (stabilityTimerRef.current !== null) {
+          clearTimeout(stabilityTimerRef.current);
+        }
+
+        // Timer para marcar como estable después de 300ms sin cambios
+        stabilityTimerRef.current = window.setTimeout(() => {
+          compute(true); // Cálculo final cuando está estable
+          isCheckingStabilityRef.current = false;
+        }, 300);
+      }
+
+      lastHeightRef.current = currentHeight;
+
+      // Continuar verificando mientras isCheckingStabilityRef sea true
+      if (isCheckingStabilityRef.current) {
+        requestAnimationFrame(checkStability);
+      }
     };
 
     compute();
@@ -311,7 +355,11 @@ export const useResponsiveMetrics = ({
     if (layoutRef.current) observer.observe(layoutRef.current);
     if (headerRef.current) observer.observe(headerRef.current);
 
-    const onResize = () => compute();
+    const onResize = () => {
+      compute(false);
+      isCheckingStabilityRef.current = true;
+      requestAnimationFrame(checkStability);
+    };
     window.addEventListener('resize', onResize);
     window.visualViewport?.addEventListener('resize', onResize);
     window.visualViewport?.addEventListener('scroll', onResize);
@@ -321,6 +369,9 @@ export const useResponsiveMetrics = ({
       window.removeEventListener('resize', onResize);
       window.visualViewport?.removeEventListener('resize', onResize);
       window.visualViewport?.removeEventListener('scroll', onResize);
+      if (stabilityTimerRef.current !== null) {
+        clearTimeout(stabilityTimerRef.current);
+      }
     };
   }, [
     boardAspect,
