@@ -12,6 +12,12 @@
     "scale": 1
   },
 
+  "layout": {
+    "_description": "Layout responsivo global del juego",
+    "spacerHeaderBoardAspect": 28,
+    "spacerBoardRackAspect": 24
+  },
+
   "panels": {
     "_comment": "=== CONTENEDORES PRINCIPALES ===",
 

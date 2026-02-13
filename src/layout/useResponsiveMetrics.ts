@@ -7,8 +7,8 @@ const clamp = (value: number, min: number, max: number) => Math.max(min, Math.mi
 const STACK_MIN_SCALE = 0.12;
 const PASS_COUNT = 4;
 const STABILITY_EPSILON = 0.5;
-const SPACER_HEADER_BOARD_ASPECT = 28;
-const SPACER_BOARD_RACK_ASPECT = 24;
+const DEFAULT_SPACER_HEADER_BOARD_ASPECT = 28;
+const DEFAULT_SPACER_BOARD_RACK_ASPECT = 24;
 
 export type ResponsiveMetrics = {
   densityFactor: number;
@@ -51,6 +51,8 @@ type UseResponsiveMetricsArgs = {
   headerAspect?: number;
   boardAspect?: number;
   rackAspect?: number;
+  spacerHeaderBoardAspect?: number;
+  spacerBoardRackAspect?: number;
   boardPanelScale?: number;
   boardPanelScaleMode?: 'density' | 'none';
   boardPanelDprReference?: number;
@@ -67,6 +69,8 @@ type MetricInput = {
   headerAspect: number;
   boardAspect: number;
   rackAspect: number;
+  spacerHeaderBoardAspect: number;
+  spacerBoardRackAspect: number;
   boardPanelScale: number;
   boardPanelScaleMode: 'density' | 'none';
   boardPanelDprReference: number;
@@ -113,6 +117,8 @@ const createMetrics = ({
   headerAspect,
   boardAspect,
   rackAspect,
+  spacerHeaderBoardAspect,
+  spacerBoardRackAspect,
   boardPanelScale,
   boardPanelScaleMode,
   boardPanelDprReference,
@@ -174,9 +180,9 @@ const createMetrics = ({
       maxScale: 1,
       panels: [
         { id: 'header', aspectRatio: Math.max(0.0001, headerAspect), widthRatio: 1 },
-        { id: 'space_header_board', aspectRatio: SPACER_HEADER_BOARD_ASPECT, widthRatio: 1 },
+        { id: 'space_header_board', aspectRatio: Math.max(0.0001, spacerHeaderBoardAspect), widthRatio: 1 },
         { id: 'board', aspectRatio: Math.max(0.0001, boardAspect), widthRatio: 1 },
-        { id: 'space_board_rack', aspectRatio: SPACER_BOARD_RACK_ASPECT, widthRatio: 1 },
+        { id: 'space_board_rack', aspectRatio: Math.max(0.0001, spacerBoardRackAspect), widthRatio: 1 },
         { id: 'rack', aspectRatio: Math.max(0.0001, rackAspect), widthRatio: 1 },
       ],
     });
@@ -187,15 +193,18 @@ const createMetrics = ({
     rackFrame = stack.frames.rack
       ?? createFallbackFrame('rack', contentWidth, rackAspect, stack.scale);
     const headerBoardSpacer = stack.frames.space_header_board
-      ?? createFallbackFrame('space_header_board', contentWidth, SPACER_HEADER_BOARD_ASPECT, stack.scale);
+      ?? createFallbackFrame('space_header_board', contentWidth, spacerHeaderBoardAspect, stack.scale);
     const boardRackSpacer = stack.frames.space_board_rack
-      ?? createFallbackFrame('space_board_rack', contentWidth, SPACER_BOARD_RACK_ASPECT, stack.scale);
+      ?? createFallbackFrame('space_board_rack', contentWidth, spacerBoardRackAspect, stack.scale);
 
     const boardEstimatedBorder = estimateNineSliceBaseBorderWidth(safeWidth, safeHeight) * boardPanelEffectiveScale;
     const boardMinInset = boardFrame.width * 0.0144;
-    const boardMaxInset = boardFrame.width * 0.047;
+    const boardMaxInset = boardFrame.width * 0.32;
+    // Keep board content inset tightly coupled with actual border thickness so
+    // high NineSlice scales preserve the same visual proportion around the grid.
+    const boardPreferredInset = Math.max(boardMinInset, boardEstimatedBorder * 0.96);
     boardInnerPadding = clamp(
-      Math.max(boardMinInset, boardEstimatedBorder * 0.434),
+      boardPreferredInset,
       boardMinInset,
       boardMaxInset
     );
@@ -335,6 +344,8 @@ export const useResponsiveMetrics = ({
   headerAspect = 5 / 1.5,
   boardAspect = 1,
   rackAspect = 3 / 2,
+  spacerHeaderBoardAspect = DEFAULT_SPACER_HEADER_BOARD_ASPECT,
+  spacerBoardRackAspect = DEFAULT_SPACER_BOARD_RACK_ASPECT,
   boardPanelScale = 1,
   boardPanelScaleMode = 'density',
   boardPanelDprReference = 2,
@@ -352,6 +363,8 @@ export const useResponsiveMetrics = ({
       headerAspect,
       boardAspect,
       rackAspect,
+      spacerHeaderBoardAspect,
+      spacerBoardRackAspect,
       boardPanelScale,
       boardPanelScaleMode,
       boardPanelDprReference,
@@ -387,6 +400,8 @@ export const useResponsiveMetrics = ({
         headerAspect,
         boardAspect,
         rackAspect,
+        spacerHeaderBoardAspect,
+        spacerBoardRackAspect,
         boardPanelScale,
         boardPanelScaleMode,
         boardPanelDprReference,
@@ -470,6 +485,8 @@ export const useResponsiveMetrics = ({
     layoutRef,
     minTouchTarget,
     powerupCount,
+    spacerBoardRackAspect,
+    spacerHeaderBoardAspect,
     rackSlotAspect,
     rackAspect
   ]);

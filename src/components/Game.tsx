@@ -8,6 +8,7 @@ import { ICONS, UI_ASSETS, UI_ASSET_ASPECT_RATIOS } from '../../assets';
 import { useAudio } from '../../utils/useAudio';
 import { useTheme, NineSlice, ResponsiveNineSlicePanel } from '../theme';
 import { useResponsiveMetrics } from '../layout/useResponsiveMetrics';
+import { LayoutDebugPanel, LayoutDebugCopyStatus } from './LayoutDebugPanel';
 
 // Since Color enum values are already icon paths, we don't need a separate mapping
 // Just check if the color value looks like an icon path (starts with '/icons/')
@@ -43,6 +44,106 @@ const toRgba = (color: string, alpha: number): string => {
     }
   }
   return color;
+};
+
+const LAYOUT_DEBUG_ENABLED_KEY = 'colorblast_layout_debug_enabled';
+const LAYOUT_DEBUG_OVERRIDES_KEY = 'colorblast_layout_debug_overrides_v1';
+const LAYOUT_DEBUG_MIN_ASPECT = 8;
+const LAYOUT_DEBUG_MAX_ASPECT = 80;
+const NINESLICE_SCALE_MULTIPLIER_MIN = 0.6;
+const NINESLICE_SCALE_MULTIPLIER_MAX = 3;
+const NINESLICE_SCALE_MULTIPLIER_STEP = 0.01;
+
+type LayoutDebugOverrides = {
+  spacerAspect: number;
+  nineSliceScaleMultiplier: number;
+};
+
+const sanitizeLayoutAspect = (value: number): number => {
+  if (!Number.isFinite(value)) return LAYOUT_DEBUG_MIN_ASPECT;
+  return Math.max(LAYOUT_DEBUG_MIN_ASPECT, Math.min(LAYOUT_DEBUG_MAX_ASPECT, Math.round(value)));
+};
+
+// Internal spacer layout works with aspect-ratio semantics:
+// higher aspect => less physical gap. We invert the UI control so a higher
+// slider value means "more separation" (more intuitive for tuning).
+const mapSpacerControlToAspect = (value: number): number => {
+  const normalized = sanitizeLayoutAspect(value);
+  return (LAYOUT_DEBUG_MIN_ASPECT + LAYOUT_DEBUG_MAX_ASPECT) - normalized;
+};
+
+const sanitizeNineSliceScaleMultiplier = (value: number): number => {
+  if (!Number.isFinite(value)) return 1;
+  const clamped = Math.max(
+    NINESLICE_SCALE_MULTIPLIER_MIN,
+    Math.min(NINESLICE_SCALE_MULTIPLIER_MAX, value)
+  );
+  return Math.round(clamped * 100) / 100;
+};
+
+const sanitizeLayoutDebugOverrides = (
+  value: Partial<LayoutDebugOverrides> | null | undefined
+): LayoutDebugOverrides | null => {
+  if (!value) return null;
+  const spacerAspect = value.spacerAspect;
+  const nineSliceScaleMultiplier = value.nineSliceScaleMultiplier;
+  if (typeof spacerAspect !== 'number' || typeof nineSliceScaleMultiplier !== 'number') return null;
+  return {
+    spacerAspect: sanitizeLayoutAspect(spacerAspect),
+    nineSliceScaleMultiplier: sanitizeNineSliceScaleMultiplier(nineSliceScaleMultiplier),
+  };
+};
+
+const readLayoutDebugEnabled = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const fromQuery = params.get('layoutDebug') === '1';
+    const fromStorage = window.localStorage.getItem(LAYOUT_DEBUG_ENABLED_KEY) === '1';
+    return fromQuery || fromStorage;
+  } catch {
+    return false;
+  }
+};
+
+const readLayoutDebugOverrides = (): LayoutDebugOverrides | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(LAYOUT_DEBUG_OVERRIDES_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<LayoutDebugOverrides>;
+    return sanitizeLayoutDebugOverrides(parsed);
+  } catch {
+    return null;
+  }
+};
+
+const copyTextToClipboard = async (text: string): Promise<boolean> => {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Fallback below
+    }
+  }
+
+  if (typeof document === 'undefined') return false;
+
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return copied;
+  } catch {
+    return false;
+  }
 };
 
 const IMAGE_PRELOAD_CACHE = new Map<string, Promise<void>>();
@@ -659,11 +760,113 @@ export const Game: React.FC = () => {
   const headerCardRef = useRef<HTMLDivElement>(null);
   const boardRef = useRef<HTMLDivElement>(null);
   const pieceRefs = useRef<(HTMLDivElement | null)[]>([null, null, null]);
-  const boardPanelConfig = theme.config('panel_main');
-  const rackPanelConfig = theme.config('container_next_main');
-  const headerPanelConfig = { ...boardPanelConfig, aspectRatio: 5 / 1.5 };
+  const boardPanelThemeConfig = theme.config('panel_main');
+  const rackPanelThemeConfig = theme.config('container_next_main');
+  const layoutThemeConfig = theme.layout();
+  const [isLayoutDebugVisible, setIsLayoutDebugVisible] = useState<boolean>(() => readLayoutDebugEnabled());
+  const [layoutDebugOverrides, setLayoutDebugOverrides] = useState<LayoutDebugOverrides | null>(() => readLayoutDebugOverrides());
+  const [layoutDebugCopyStatus, setLayoutDebugCopyStatus] = useState<LayoutDebugCopyStatus>('idle');
+  const themeSpacerBaseAspect = useMemo(() => (
+    (layoutThemeConfig.spacerHeaderBoardAspect + layoutThemeConfig.spacerBoardRackAspect) / 2
+  ), [layoutThemeConfig.spacerBoardRackAspect, layoutThemeConfig.spacerHeaderBoardAspect]);
+
+  const appliedLayoutDebugOverrides = useMemo<LayoutDebugOverrides>(() => ({
+    spacerAspect: sanitizeLayoutAspect(
+      layoutDebugOverrides?.spacerAspect ?? themeSpacerBaseAspect
+    ),
+    nineSliceScaleMultiplier: sanitizeNineSliceScaleMultiplier(
+      layoutDebugOverrides?.nineSliceScaleMultiplier ?? 1
+    ),
+  }), [
+    layoutDebugOverrides,
+    themeSpacerBaseAspect,
+  ]);
+
+  const effectiveSpacerHeaderBoardAspect = useMemo(() => {
+    const safeBase = Math.max(0.0001, themeSpacerBaseAspect);
+    const ratio = layoutThemeConfig.spacerHeaderBoardAspect / safeBase;
+    const mappedBaseAspect = mapSpacerControlToAspect(appliedLayoutDebugOverrides.spacerAspect);
+    return sanitizeLayoutAspect(mappedBaseAspect * ratio);
+  }, [
+    appliedLayoutDebugOverrides.spacerAspect,
+    layoutThemeConfig.spacerHeaderBoardAspect,
+    themeSpacerBaseAspect,
+  ]);
+
+  const effectiveSpacerBoardRackAspect = useMemo(() => {
+    const safeBase = Math.max(0.0001, themeSpacerBaseAspect);
+    const ratio = layoutThemeConfig.spacerBoardRackAspect / safeBase;
+    const mappedBaseAspect = mapSpacerControlToAspect(appliedLayoutDebugOverrides.spacerAspect);
+    return sanitizeLayoutAspect(mappedBaseAspect * ratio);
+  }, [
+    appliedLayoutDebugOverrides.spacerAspect,
+    layoutThemeConfig.spacerBoardRackAspect,
+    themeSpacerBaseAspect,
+  ]);
+
+  const nineSliceScaleMultiplier = appliedLayoutDebugOverrides.nineSliceScaleMultiplier;
+
+  const boardPanelConfig = useMemo(() => ({
+    ...boardPanelThemeConfig,
+    scale: (boardPanelThemeConfig.scale ?? 1) * nineSliceScaleMultiplier,
+  }), [boardPanelThemeConfig, nineSliceScaleMultiplier]);
+
+  const rackPanelConfig = useMemo(() => ({
+    ...rackPanelThemeConfig,
+    scale: (rackPanelThemeConfig.scale ?? 1) * nineSliceScaleMultiplier,
+  }), [rackPanelThemeConfig, nineSliceScaleMultiplier]);
+
+  const headerPanelConfig = useMemo(() => ({
+    ...boardPanelConfig,
+    aspectRatio: 5 / 1.5,
+  }), [boardPanelConfig]);
+
   const boardAspect = boardPanelConfig.aspectRatio ?? 1;
   const rackAspect = rackPanelConfig.aspectRatio ?? (3 / 2);
+
+  const updateLayoutDebugOverride = useCallback((patch: Partial<LayoutDebugOverrides>) => {
+    setLayoutDebugOverrides((prev) => {
+      const base = prev ?? appliedLayoutDebugOverrides;
+      return sanitizeLayoutDebugOverrides({ ...base, ...patch });
+    });
+    setLayoutDebugCopyStatus('idle');
+  }, [appliedLayoutDebugOverrides]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(LAYOUT_DEBUG_ENABLED_KEY, isLayoutDebugVisible ? '1' : '0');
+    } catch {
+      // Ignore persistence errors
+    }
+  }, [isLayoutDebugVisible]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      if (!layoutDebugOverrides) {
+        window.localStorage.removeItem(LAYOUT_DEBUG_OVERRIDES_KEY);
+        return;
+      }
+      window.localStorage.setItem(LAYOUT_DEBUG_OVERRIDES_KEY, JSON.stringify(layoutDebugOverrides));
+    } catch {
+      // Ignore persistence errors
+    }
+  }, [layoutDebugOverrides]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const isShortcut = (event.ctrlKey || event.metaKey)
+        && event.shiftKey
+        && event.key.toLowerCase() === 'l';
+      if (!isShortcut) return;
+      event.preventDefault();
+      setIsLayoutDebugVisible((prev) => !prev);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   const backgroundImageSrc = theme.background('bg_game');
   const boardPanelSrc = theme.panel('panel_main');
   const rackPanelSrc = theme.panel('panel_main');
@@ -682,6 +885,8 @@ export const Game: React.FC = () => {
     headerAspect: headerPanelConfig.aspectRatio ?? (5 / 1.5),
     boardAspect,
     rackAspect,
+    spacerHeaderBoardAspect: effectiveSpacerHeaderBoardAspect,
+    spacerBoardRackAspect: effectiveSpacerBoardRackAspect,
     boardPanelScale: boardPanelConfig.scale ?? 1,
     boardPanelScaleMode: boardPanelConfig.scaleMode ?? 'density',
     boardPanelDprReference: boardPanelConfig.dprReference ?? 2,
@@ -3217,6 +3422,64 @@ export const Game: React.FC = () => {
   const headerVolumeBg = toRgba(objectiveTrackColor, 0.32);
   const headerVolumeBorder = toRgba(objectiveTrackColor, 0.45);
   const headerVolumeIconColor = musicEnabled ? 'rgba(255, 255, 255, 0.92)' : 'rgba(226, 232, 240, 0.62)';
+  const layoutDebugSnapshot = useMemo(() => ({
+    theme: theme.themeName,
+    overrides: appliedLayoutDebugOverrides,
+    effectiveSpacerAspects: {
+      headerBoard: effectiveSpacerHeaderBoardAspect,
+      boardRack: effectiveSpacerBoardRackAspect,
+    },
+    effectiveNineSliceScaleMultiplier: nineSliceScaleMultiplier,
+    themeLayoutDefaults: layoutThemeConfig,
+    metrics: {
+      layoutPadding: Number(responsive.layoutPadding.toFixed(2)),
+      layoutGap: Number(responsive.layoutGap.toFixed(2)),
+      boardCellSize: Number(responsive.boardCellSize.toFixed(2)),
+      boardInnerPadding: Number(responsive.boardInnerPadding.toFixed(2)),
+      boardInnerPaddingRatio: Number((responsive.boardInnerPadding / Math.max(1, responsive.boardPanelWidthPx)).toFixed(4)),
+      boardPanelWidthPx: Number(responsive.boardPanelWidthPx.toFixed(2)),
+      boardWidthPercent: Number(responsive.boardWidthPercent.toFixed(2)),
+      rackWidthPercent: Number(responsive.rackWidthPercent.toFixed(2)),
+      powerupButtonSize: Number(responsive.powerupButtonSize.toFixed(2)),
+      powerupGap: Number(responsive.powerupGap.toFixed(2)),
+      reservedBottomSpace: Number(responsive.reservedBottomSpace.toFixed(2)),
+      viewportHeight: Number(responsive.viewportHeight.toFixed(2)),
+      isViewportStable: responsive.isViewportStable,
+    },
+  }), [
+    appliedLayoutDebugOverrides,
+    effectiveSpacerBoardRackAspect,
+    effectiveSpacerHeaderBoardAspect,
+    layoutThemeConfig,
+    nineSliceScaleMultiplier,
+    responsive.boardCellSize,
+    responsive.boardInnerPadding,
+    responsive.boardPanelWidthPx,
+    responsive.boardWidthPercent,
+    responsive.isViewportStable,
+    responsive.layoutGap,
+    responsive.layoutPadding,
+    responsive.powerupButtonSize,
+    responsive.powerupGap,
+    responsive.rackWidthPercent,
+    responsive.reservedBottomSpace,
+    responsive.viewportHeight,
+    theme.themeName,
+  ]);
+  const layoutDebugText = useMemo(
+    () => JSON.stringify(layoutDebugSnapshot, null, 2),
+    [layoutDebugSnapshot]
+  );
+
+  const handleCopyLayoutDebug = useCallback(async () => {
+    const copied = await copyTextToClipboard(layoutDebugText);
+    setLayoutDebugCopyStatus(copied ? 'copied' : 'error');
+  }, [layoutDebugText]);
+
+  const handleResetLayoutDebug = useCallback(() => {
+    setLayoutDebugOverrides(null);
+    setLayoutDebugCopyStatus('idle');
+  }, []);
 
   return (
     <div
@@ -3553,7 +3816,7 @@ export const Game: React.FC = () => {
         src={boardPanelSrc}
         {...headerPanelConfig}
         widthPercent={responsive.boardWidthPercent}
-        className="relative shadow-xl overflow-hidden"
+        className="relative overflow-hidden"
         style={{
           marginBottom: `${responsive.layoutGap}px`,
           padding: `${headerPanelPaddingY}px ${headerPanelPaddingX}px`
@@ -3678,7 +3941,7 @@ export const Game: React.FC = () => {
           src={boardPanelSrc}
           {...boardPanelConfig}
           widthPercent={responsive.boardWidthPercent}
-          className={`relative shadow-2xl ${isShaking ? 'shake-animation' : ''}`}
+          className={`relative ${isShaking ? 'shake-animation' : ''}`}
           style={{
             padding: `${responsive.boardInnerPadding}px`,
             marginBottom: `${responsive.layoutGap}px`,
@@ -4386,7 +4649,7 @@ export const Game: React.FC = () => {
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[210]" onClick={(e) => e.stopPropagation()}>
           <NineSlice
             src={theme.panel('panel_main')}
-            {...theme.config('panel_main')}
+            {...boardPanelConfig}
             className="p-6 mx-4 max-w-sm w-full text-center"
           >
             <div className="text-6xl mb-4">🎉</div>
@@ -4429,6 +4692,24 @@ export const Game: React.FC = () => {
           </div>
         </div>
       )}
+
+      <LayoutDebugPanel
+        visible={isLayoutDebugVisible}
+        minAspect={LAYOUT_DEBUG_MIN_ASPECT}
+        maxAspect={LAYOUT_DEBUG_MAX_ASPECT}
+        spacerAspect={appliedLayoutDebugOverrides.spacerAspect}
+        minScaleMultiplier={NINESLICE_SCALE_MULTIPLIER_MIN}
+        maxScaleMultiplier={NINESLICE_SCALE_MULTIPLIER_MAX}
+        scaleMultiplierStep={NINESLICE_SCALE_MULTIPLIER_STEP}
+        nineSliceScaleMultiplier={appliedLayoutDebugOverrides.nineSliceScaleMultiplier}
+        copyStatus={layoutDebugCopyStatus}
+        debugText={layoutDebugText}
+        onChangeSpacerAspect={(value) => updateLayoutDebugOverride({ spacerAspect: value })}
+        onChangeNineSliceScaleMultiplier={(value) => updateLayoutDebugOverride({ nineSliceScaleMultiplier: value })}
+        onCopy={handleCopyLayoutDebug}
+        onReset={handleResetLayoutDebug}
+        onHide={() => setIsLayoutDebugVisible(false)}
+      />
       </div>
 
       {showLoadingScreen && (

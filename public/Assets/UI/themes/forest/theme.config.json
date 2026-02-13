@@ -9,6 +9,12 @@
     }
   },
 
+  "layout": {
+    "_description": "Overrides opcionales del layout responsivo",
+    "spacerHeaderBoardAspect": 28,
+    "spacerBoardRackAspect": 24
+  },
+
   "custom": {
     "panel_level_select": {
       "divisionX": 0.5,

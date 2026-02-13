@@ -4,6 +4,7 @@ import {
   ThemeAssets,
   NineSliceConfig,
   DEFAULT_NINESLICE_CONFIG,
+  DEFAULT_THEME_LAYOUT_CONFIG,
   AssetCategory,
 } from './types';
 
@@ -182,6 +183,18 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ theme, children })
     };
   }, [themeConfig, baseConfig]);
 
+  /**
+   * Obtener configuración de layout responsivo global
+   * Merge: tema actual > base > defaults globales
+   */
+  const getLayoutConfig = useCallback(() => {
+    return {
+      ...DEFAULT_THEME_LAYOUT_CONFIG,
+      ...baseConfig?.layout,
+      ...themeConfig?.layout,
+    };
+  }, [baseConfig, themeConfig]);
+
   // API del tema
   const themeAssets: ThemeAssets = {
     themeName: theme,
@@ -190,6 +203,7 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ theme, children })
     // Assets con NineSlice
     panel: (name: string) => getAssetWithFallback('panels', name),
     config: getConfig,
+    layout: getLayoutConfig,
 
     // Assets normales
     icon: (name: string) => getAssetWithFallback('icons', name),

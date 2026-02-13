@@ -40,6 +40,16 @@ export interface NineSliceConfig {
 }
 
 /**
+ * Configuración de layout responsivo global por tema
+ */
+export interface ThemeLayoutConfig {
+  /** Aspect ratio del espaciador entre header y board (más alto = menos espacio) */
+  spacerHeaderBoardAspect?: number;
+  /** Aspect ratio del espaciador entre board y rack (más alto = menos espacio) */
+  spacerBoardRackAspect?: number;
+}
+
+/**
  * Configuración por defecto para NineSlice
  */
 export const DEFAULT_NINESLICE_CONFIG: Required<Omit<NineSliceConfig, 'aspectRatio'>> & { aspectRatio: undefined } = {
@@ -59,6 +69,14 @@ export const DEFAULT_NINESLICE_CONFIG: Required<Omit<NineSliceConfig, 'aspectRat
 };
 
 /**
+ * Configuración default para layout responsivo global
+ */
+export const DEFAULT_THEME_LAYOUT_CONFIG: Required<ThemeLayoutConfig> = {
+  spacerHeaderBoardAspect: 28,
+  spacerBoardRackAspect: 24,
+};
+
+/**
  * Configuración de un tema completo
  */
 export interface ThemeConfig {
@@ -75,6 +93,9 @@ export interface ThemeConfig {
 
   /** Defaults globales para este tema */
   defaults?: NineSliceConfig;
+
+  /** Layout responsivo global (no asociado a un asset específico) */
+  layout?: ThemeLayoutConfig;
 }
 
 /**
@@ -102,6 +123,7 @@ export interface ThemeAssets {
   // Assets con NineSlice (paneles, botones)
   panel: (name: string) => string;
   config: (name: string) => Required<NineSliceConfig>;
+  layout: () => Required<ThemeLayoutConfig>;
 
   // Assets normales (sin estirar)
   icon: (name: string) => string;
