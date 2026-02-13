@@ -23,6 +23,7 @@ const SOUNDS = {
   // Boosters
   createBooster: '/Assets/Sound/SFX/Ui & Item Sounds - HD Remake/Powerup upgrade 8.wav',
   activateBooster: '/Assets/Sound/SFX/Other/477162__sieuamthanh__beam-8.wav',
+  boosterWave: '/Assets/Sound/SFX/Ui & Item Sounds - HD Remake/Pop sound 15.wav',
   superballCharge: '/Assets/Sound/SFX/Other/588242__magnuswaker__laser-charge-up.wav',
   superball: '/Assets/Sound/SFX/Other/477162__sieuamthanh__beam-8.wav',
 

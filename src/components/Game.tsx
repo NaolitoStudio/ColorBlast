@@ -81,6 +81,41 @@ const POWERUP_GAP_MULTIPLIER_MAX = 2;
 const POWERUP_GAP_MULTIPLIER_STEP = 0.01;
 const FRAME_MS_60FPS = 1000 / 60;
 const POST_DESTRUCTION_ALL_CLEAR_DELAY_MS = 650;
+const BOOSTER_WAVE_STEP_MS = 200;
+
+const isWaveBoosterType = (type: BoosterType | undefined): type is 'line_bomb' | 'rocket_h' | 'rocket_v' => (
+  type === 'line_bomb' || type === 'rocket_h' || type === 'rocket_v'
+);
+
+const buildBoosterWaveSteps = (booster: Booster): Point[][] => {
+  if (!isWaveBoosterType(booster.type)) return [];
+
+  const steps: Point[][] = [];
+
+  for (let distance = 1; distance < GRID_SIZE; distance++) {
+    const points: Point[] = [];
+
+    if (booster.type === 'line_bomb' || booster.type === 'rocket_h') {
+      const leftX = booster.x - distance;
+      const rightX = booster.x + distance;
+      if (leftX >= 0) points.push({ x: leftX, y: booster.y });
+      if (rightX < GRID_SIZE) points.push({ x: rightX, y: booster.y });
+    }
+
+    if (booster.type === 'line_bomb' || booster.type === 'rocket_v') {
+      const upY = booster.y - distance;
+      const downY = booster.y + distance;
+      if (upY >= 0) points.push({ x: booster.x, y: upY });
+      if (downY < GRID_SIZE) points.push({ x: booster.x, y: downY });
+    }
+
+    if (points.length > 0) {
+      steps.push(points);
+    }
+  }
+
+  return steps;
+};
 
 type LayoutDebugOverrides = {
   spacerAspect: number;
@@ -358,6 +393,16 @@ interface FloatingText {
   maxLife: number;
   scale: number;
   color: string;
+}
+
+interface ExplosionSprite {
+  id: number;
+  x: number;
+  y: number;
+  color: string;
+  size: number;
+  life: number;
+  maxLife: number;
 }
 
 type SuperballAnimationState = {
@@ -831,6 +876,7 @@ export const Game: React.FC = () => {
   
   // Effects State
   const [particles, setParticles] = useState<Particle[]>([]);
+  const [explosionSprites, setExplosionSprites] = useState<ExplosionSprite[]>([]);
   const [floatingTexts, setFloatingTexts] = useState<FloatingText[]>([]);
   const [isShaking, setIsShaking] = useState(false);
   const [celebrating, setCelebrating] = useState(false);
@@ -858,6 +904,7 @@ export const Game: React.FC = () => {
   const destructionQueueRef = useRef<DestructionRequest[]>([]);
   const activeDestructionEffectsRef = useRef<Map<string, ActiveEffect>>(new Map());
   const destructionCommitTimersRef = useRef<Map<string, number>>(new Map());
+  const destructionWaveTimersRef = useRef<Map<string, number[]>>(new Map());
   const engineIdleCallbacksRef = useRef<Array<() => void>>([]);
   const [shufflePhase, setShufflePhase] = useState<'darkening' | 'levitating' | 'scrambling' | 'landing' | null>(null);
   const [shuffleAnimations, setShuffleAnimations] = useState<Array<{
@@ -1167,7 +1214,7 @@ export const Game: React.FC = () => {
     setShowLoadingScreen(true);
 
     const bootstrapAssets = async () => {
-      await preloadAudio('blocksIncoming');
+      await preloadAudio(['blocksIncoming', 'boosterWave']);
       await preloadImages([
         backgroundImageSrc,
         loadingLevelTemplateSrc,
@@ -1253,6 +1300,14 @@ export const Game: React.FC = () => {
         vy: p.vy + (0.5 * frameScale), // Gravity
         life: p.life - frameScale
       })).filter(p => p.life > 0);
+    });
+
+    setExplosionSprites(prev => {
+      if (prev.length === 0) return prev;
+      return prev.map(sprite => ({
+        ...sprite,
+        life: sprite.life - frameScale
+      })).filter(sprite => sprite.life > 0);
     });
 
     setFloatingTexts(prev => {
@@ -1345,6 +1400,21 @@ export const Game: React.FC = () => {
       maxLife: 60,
       scale: 1,
       color: '#fff'
+    }]);
+  };
+
+  const spawnExplosionSprite = (x: number, y: number, color: string, sizeMultiplier: number = 1) => {
+    const spriteColor = isIconPath(color) ? getParticleColor(color) : color;
+    const baseSize = 34 * sizeMultiplier;
+
+    setExplosionSprites(prev => [...prev, {
+      id: ++particleIdCounter.current,
+      x,
+      y,
+      color: spriteColor,
+      size: baseSize,
+      life: 12,
+      maxLife: 12
     }]);
   };
 
@@ -1576,11 +1646,191 @@ export const Game: React.FC = () => {
       destructionCommitTimersRef.current.delete(effectId);
     }
 
+    const waveTimers = destructionWaveTimersRef.current.get(effectId);
+    if (waveTimers && waveTimers.length > 0) {
+      waveTimers.forEach((timerId) => window.clearTimeout(timerId));
+      destructionWaveTimersRef.current.delete(effectId);
+    }
+
     activeDestructionEffectsRef.current.delete(effectId);
     syncDestructionRuntime();
     processDestructionQueueRef.current();
     flushEngineIdleCallbacks();
   }, [flushEngineIdleCallbacks, syncDestructionRuntime]);
+
+  const runWaveBoosterCommit = useCallback((
+    effect: ActiveEffect,
+    snapshotBefore: {
+      grid: (TileData | null)[][];
+      boosters: Booster[];
+      objectives: LevelObjective[];
+    }
+  ) => {
+    if (!effect.boosterId || !isWaveBoosterType(effect.boosterType)) {
+      finalizeDestructionEffect(effect.effectId);
+      return;
+    }
+
+    const booster = snapshotBefore.boosters.find((entry) => entry.id === effect.boosterId);
+    if (!booster) {
+      finalizeDestructionEffect(effect.effectId);
+      return;
+    }
+
+    const waveSteps = buildBoosterWaveSteps(booster);
+    const scoreMultiplier = booster.type === 'line_bomb' ? 1.5 : 1;
+    const objectiveDeltas: Partial<Record<Color, number>> = {};
+    let removedTileCount = 0;
+
+    const removeBoosterNow = () => {
+      const currentState = gameStateRef.current;
+      if (!currentState.boosters.some((entry) => entry.id === booster.id)) return;
+      const nextState: GameState = {
+        ...currentState,
+        boosters: currentState.boosters.filter((entry) => entry.id !== booster.id)
+      };
+      gameStateRef.current = nextState;
+      setGameState(nextState);
+    };
+
+    const finalizeWaveCommit = () => {
+      if (!activeDestructionEffectsRef.current.has(effect.effectId)) return;
+
+      const scoreDelta = Math.round(removedTileCount * 15 * scoreMultiplier);
+      const hasObjectiveDeltas = Object.keys(objectiveDeltas).length > 0;
+
+      if (scoreDelta > 0 || hasObjectiveDeltas) {
+        const currentState = gameStateRef.current;
+        const updatedObjectives = currentState.objectives.map((objective) => ({
+          ...objective,
+          current: Math.min(
+            objective.target,
+            objective.current + (objectiveDeltas[objective.color] ?? 0)
+          )
+        }));
+        const isLevelComplete = updatedObjectives.slice(0, 2).every((objective) => objective.current >= objective.target);
+
+        const nextState: GameState = {
+          ...currentState,
+          score: currentState.score + scoreDelta,
+          objectives: updatedObjectives,
+          levelComplete: isLevelComplete,
+          clearingTiles: [],
+          gameOver: false
+        };
+
+        if (!isLevelComplete) {
+          if (isGridEmpty(nextState.grid, nextState.boosters)) {
+            pendingAllClearAfterDestructionRef.current = true;
+            pendingOnlyBoostersAfterDestructionRef.current = false;
+          } else if (hasOnlyBoostersLeft(nextState.grid, nextState.boosters)) {
+            pendingOnlyBoostersAfterDestructionRef.current = true;
+          } else {
+            pendingAllClearAfterDestructionRef.current = false;
+            pendingOnlyBoostersAfterDestructionRef.current = false;
+            nextState.gameOver = isGameOver(nextState.grid, nextState.hand, nextState.boosters);
+          }
+        } else {
+          pendingAllClearAfterDestructionRef.current = false;
+          pendingOnlyBoostersAfterDestructionRef.current = false;
+        }
+
+        gameStateRef.current = nextState;
+        setGameState(nextState);
+      }
+
+      finalizeDestructionEffect(effect.effectId);
+    };
+
+    removeBoosterNow();
+
+    if (waveSteps.length === 0) {
+      finalizeWaveCommit();
+      return;
+    }
+
+    const scheduledTimers: number[] = [];
+    destructionWaveTimersRef.current.set(effect.effectId, scheduledTimers);
+
+    waveSteps.forEach((stepPoints, stepIndex) => {
+      const timerId = window.setTimeout(() => {
+        if (!activeDestructionEffectsRef.current.has(effect.effectId)) return;
+        if (stepPoints.length > 0) {
+          audio.play('boosterWave', 0.28, 0.92);
+        }
+
+        const currentState = gameStateRef.current;
+        const nextGrid = currentState.grid.map((row) => [...row]);
+        const chainBoosters: string[] = [];
+        let stepRemovedCount = 0;
+        let stepUnlockedCount = 0;
+
+        stepPoints.forEach((point) => {
+          const metrics = getCellMetrics(point.x, point.y);
+          if (metrics) {
+            spawnExplosionSprite(metrics.centerX, metrics.centerY, '#fde047', 0.95);
+          }
+
+          const hitBooster = currentState.boosters.find(
+            (entry) => entry.x === point.x && entry.y === point.y && entry.id !== booster.id
+          );
+          if (hitBooster) {
+            chainBoosters.push(hitBooster.id);
+          }
+
+          const tile = nextGrid[point.y]?.[point.x];
+          if (!tile) return;
+
+          if (tile.locked) {
+            nextGrid[point.y][point.x] = { ...tile, locked: false };
+            stepUnlockedCount += 1;
+            if (metrics) {
+              spawnFloatingText(metrics.centerX, metrics.centerY, '🔓');
+            }
+            return;
+          }
+
+          nextGrid[point.y][point.x] = null;
+          stepRemovedCount += 1;
+          removedTileCount += 1;
+          objectiveDeltas[tile.color] = (objectiveDeltas[tile.color] ?? 0) + 1;
+          if (metrics) {
+            spawnParticles(metrics.centerX, metrics.centerY, tile.color, 8);
+          }
+        });
+
+        if (stepRemovedCount > 0 || stepUnlockedCount > 0) {
+          const nextState: GameState = {
+            ...currentState,
+            grid: nextGrid
+          };
+          gameStateRef.current = nextState;
+          setGameState(nextState);
+        }
+
+        if (stepRemovedCount > 0 || stepUnlockedCount > 0) {
+          triggerShake();
+        }
+
+        if (chainBoosters.length > 0) {
+          enqueueChainBoosters(chainBoosters);
+          processDestructionQueueRef.current();
+        }
+
+        if (stepIndex === waveSteps.length - 1) {
+          finalizeWaveCommit();
+        }
+      }, stepIndex * BOOSTER_WAVE_STEP_MS);
+
+      scheduledTimers.push(timerId);
+    });
+  }, [
+    audio,
+    enqueueChainBoosters,
+    finalizeDestructionEffect,
+    hasOnlyBoostersLeft,
+    isGridEmpty
+  ]);
 
   const commitDestructionEffect = useCallback((effectId: string) => {
     const effect = activeDestructionEffectsRef.current.get(effectId);
@@ -1590,6 +1840,11 @@ export const Game: React.FC = () => {
     syncDestructionRuntime();
 
     const snapshotBefore = getDestructionSnapshot();
+    if (effect.request.kind === 'booster' && isWaveBoosterType(effect.boosterType)) {
+      runWaveBoosterCommit(effect, snapshotBefore);
+      return;
+    }
+
     const commit = computeCommitForEffect(effect, snapshotBefore);
 
     if (effect.request.kind === 'booster' && effect.boosterType === 'color_ball') {
@@ -1696,10 +1951,10 @@ export const Game: React.FC = () => {
     enqueueChainBoosters,
     finalizeDestructionEffect,
     getDestructionSnapshot,
-    handleAllClear,
-    handleOnlyBoostersLeft,
     isGridEmpty,
-    hasOnlyBoostersLeft
+    hasOnlyBoostersLeft,
+    runWaveBoosterCommit,
+    syncDestructionRuntime
   ]);
 
   commitDestructionEffectRef.current = commitDestructionEffect;
@@ -1737,7 +1992,7 @@ export const Game: React.FC = () => {
 
       if (effect.request.kind === 'booster' && effect.boosterType === 'color_ball') {
         audio.play('superballCharge', undefined, 0.8);
-      } else if (effect.request.kind === 'booster') {
+      } else if (effect.request.kind === 'booster' && !isWaveBoosterType(effect.boosterType)) {
         audio.play('activateBooster', 0.15);
       }
 
@@ -1774,6 +2029,10 @@ export const Game: React.FC = () => {
         window.clearTimeout(timerId);
       });
       destructionCommitTimersRef.current.clear();
+      destructionWaveTimersRef.current.forEach((timerIds) => {
+        timerIds.forEach((timerId) => window.clearTimeout(timerId));
+      });
+      destructionWaveTimersRef.current.clear();
       activeDestructionEffectsRef.current.clear();
       destructionQueueRef.current = [];
       engineIdleCallbacksRef.current = [];
@@ -1925,6 +2184,7 @@ export const Game: React.FC = () => {
       levelComplete: false
     });
     setParticles([]);
+    setExplosionSprites([]);
     setFloatingTexts([]);
     setCelebrating(false);
     setShowLevelPopup(false);
@@ -1940,6 +2200,10 @@ export const Game: React.FC = () => {
       window.clearTimeout(timerId);
     });
     destructionCommitTimersRef.current.clear();
+    destructionWaveTimersRef.current.forEach((timerIds) => {
+      timerIds.forEach((timerId) => window.clearTimeout(timerId));
+    });
+    destructionWaveTimersRef.current.clear();
     engineIdleCallbacksRef.current = [];
     pendingAllClearAfterDestructionRef.current = false;
     pendingOnlyBoostersAfterDestructionRef.current = false;
@@ -1966,6 +2230,7 @@ export const Game: React.FC = () => {
       levelComplete: false
     }));
     setParticles([]);
+    setExplosionSprites([]);
     setFloatingTexts([]);
     setCelebrating(false);
     setShowLevelPopup(false);
@@ -1981,6 +2246,10 @@ export const Game: React.FC = () => {
       window.clearTimeout(timerId);
     });
     destructionCommitTimersRef.current.clear();
+    destructionWaveTimersRef.current.forEach((timerIds) => {
+      timerIds.forEach((timerId) => window.clearTimeout(timerId));
+    });
+    destructionWaveTimersRef.current.clear();
     engineIdleCallbacksRef.current = [];
     pendingAllClearAfterDestructionRef.current = false;
     pendingOnlyBoostersAfterDestructionRef.current = false;
@@ -3859,6 +4128,30 @@ export const Game: React.FC = () => {
 
       {/* Effects Layer */}
       <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden">
+        {explosionSprites.filter(sprite => sprite.life > 0).map(sprite => {
+          const progress = 1 - (sprite.life / sprite.maxLife);
+          const scale = 0.72 + (progress * 0.9);
+          const opacity = Math.max(0, sprite.life / sprite.maxLife);
+          return (
+            <div
+              key={sprite.id}
+              style={{
+                position: 'absolute',
+                left: sprite.x,
+                top: sprite.y,
+                width: sprite.size,
+                height: sprite.size,
+                borderRadius: '9999px',
+                opacity,
+                transform: `translate(-50%, -50%) scale(${scale}) rotate(${progress * 120}deg)`,
+                background: `radial-gradient(circle, rgba(255,255,255,0.95) 0%, ${toRgba(sprite.color, 0.95)} 26%, ${toRgba(sprite.color, 0.4)} 58%, rgba(255,255,255,0) 78%)`,
+                boxShadow: `0 0 ${sprite.size * 0.55}px ${toRgba(sprite.color, 0.75)}`,
+                mixBlendMode: 'screen',
+                willChange: 'transform, opacity'
+              }}
+            />
+          );
+        })}
         {particles.filter(p => p.life > 0).map(p => (
           <div
             key={p.id}
