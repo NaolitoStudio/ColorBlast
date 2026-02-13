@@ -9,6 +9,8 @@ import { useAudio } from '../../utils/useAudio';
 import { useTheme, NineSlice, ResponsiveNineSlicePanel } from '../theme';
 import { useResponsiveMetrics } from '../layout/useResponsiveMetrics';
 import { LayoutDebugPanel, LayoutDebugCopyStatus } from './LayoutDebugPanel';
+import { useAnimationFrame } from '../hooks/useAnimationFrame';
+import { createSeededRandom, hashStringToSeed, RandomFn, shuffleWithRandom } from '../utils/stableRandom';
 
 // Since Color enum values are already icon paths, we don't need a separate mapping
 // Just check if the color value looks like an icon path (starts with '/icons/')
@@ -62,6 +64,7 @@ const POWERUP_BUBBLE_SIZE_MULTIPLIER_STEP = 0.01;
 const POWERUP_GAP_MULTIPLIER_MIN = 0.5;
 const POWERUP_GAP_MULTIPLIER_MAX = 2;
 const POWERUP_GAP_MULTIPLIER_STEP = 0.01;
+const FRAME_MS_60FPS = 1000 / 60;
 
 type LayoutDebugOverrides = {
   spacerAspect: number;
@@ -411,21 +414,41 @@ const getBoardCellMetrics = (board: HTMLDivElement, x: number, y: number) => {
   };
 };
 
-// Lightning rays component for superball animation
-const LightningRays: React.FC<{
+type LightningRaysProps = {
   booster: Booster;
   affectedCells: Set<string>;
   boardRef: React.RefObject<HTMLDivElement>;
   phase: 'buildup' | 'explode';
-}> = ({ booster, affectedCells, boardRef, phase }) => {
+};
+const LIGHTNING_TICK_MS = 70;
+
+// Lightning rays component for superball animation.
+// Memoized so unrelated parent re-renders do not increase perceived flicker speed.
+const LightningRays = React.memo(({
+  booster,
+  affectedCells,
+  boardRef,
+  phase
+}: LightningRaysProps) => {
   const [tick, setTick] = useState(0);
 
-  // Refresh rays at a moderate pace to avoid over-chaotic flicker
+  // Keep a stable tick timeline, independent from parent re-renders.
   useEffect(() => {
     if (phase !== 'buildup') return;
-    const interval = setInterval(() => setTick(t => t + 1), 70);
-    return () => clearInterval(interval);
-  }, [phase]);
+    setTick(0);
+  }, [phase, booster.id]);
+
+  useAnimationFrame(
+    ({ elapsedMs }) => {
+      const nextTick = Math.floor(elapsedMs / LIGHTNING_TICK_MS);
+      setTick(prev => (prev === nextTick ? prev : nextTick));
+    },
+    {
+      active: phase === 'buildup',
+      resetKey: booster.id,
+      maxDeltaMs: 50
+    }
+  );
 
   const board = boardRef.current;
   if (phase !== 'buildup' || !board) return null;
@@ -443,7 +466,7 @@ const LightningRays: React.FC<{
     return path;
   };
 
-  const generateDetailedBolt = (x1: number, y1: number, x2: number, y2: number) => {
+  const generateDetailedBolt = (x1: number, y1: number, x2: number, y2: number, rng: RandomFn) => {
     const secondaryBranchesEnabled = false;
     const dx = x2 - x1;
     const dy = y2 - y1;
@@ -470,7 +493,7 @@ const LightningRays: React.FC<{
       const baseX = x1 + dx * t;
       const baseY = y1 + dy * t;
       const centerBias = 0.7 + Math.sin(Math.PI * t) * 0.25;
-      const chaos = (Math.random() - 0.5) * 2 * maxOffset * centerBias;
+      const chaos = (rng() - 0.5) * 2 * maxOffset * centerBias;
       const wave = Math.sin((t * Math.PI * 2) + (tick * 0.25)) * maxOffset * 0.05;
 
       points.push({
@@ -488,7 +511,7 @@ const LightningRays: React.FC<{
       const maxAnchorIndex = points.length - 3;
       const anchorIndex = Math.min(
         maxAnchorIndex,
-        Math.max(2, Math.floor(Math.random() * (maxAnchorIndex - 1)) + 2)
+        Math.max(2, Math.floor(rng() * (maxAnchorIndex - 1)) + 2)
       );
       const anchor = points[anchorIndex];
       const prev = points[Math.max(0, anchorIndex - 1)];
@@ -500,21 +523,21 @@ const LightningRays: React.FC<{
       const localDirY = localDy / localDist;
 
       // Branches should keep moving forward-ish, then diverge (not perpendicular spikes).
-      const branchSign = Math.random() < 0.5 ? -1 : 1;
-      const branchAngle = branchSign * (0.35 + Math.random() * 0.55); // ~20deg to ~51deg
+      const branchSign = rng() < 0.5 ? -1 : 1;
+      const branchAngle = branchSign * (0.35 + rng() * 0.55); // ~20deg to ~51deg
       const branchDirX = localDirX * Math.cos(branchAngle) - localDirY * Math.sin(branchAngle);
       const branchDirY = localDirX * Math.sin(branchAngle) + localDirY * Math.cos(branchAngle);
       const branchPerpX = -branchDirY;
       const branchPerpY = branchDirX;
 
-      const branchLength = dist * (0.08 + Math.random() * 0.10);
-      const branchSegments = 2 + (Math.random() < 0.45 ? 1 : 0);
+      const branchLength = dist * (0.08 + rng() * 0.10);
+      const branchSegments = 2 + (rng() < 0.45 ? 1 : 0);
       const branchPoints: Point[] = [{ x: anchor.x, y: anchor.y }];
 
       for (let s = 1; s <= branchSegments; s++) {
         const t = s / branchSegments;
         const len = branchLength * t;
-        const jitter = (Math.random() - 0.5) * maxOffset * (0.1 + t * 0.05);
+        const jitter = (rng() - 0.5) * maxOffset * (0.1 + t * 0.05);
         const x = anchor.x + branchDirX * len + branchPerpX * jitter;
         const y = anchor.y + branchDirY * len + branchPerpY * jitter;
         branchPoints.push({ x, y });
@@ -523,25 +546,25 @@ const LightningRays: React.FC<{
       branchPaths.push(toPath(branchPoints));
 
       // Secondary branching: 1-2 forks with their own zig-zag.
-      if (branchPoints.length > 2 && Math.random() < 0.9) {
-        const forkCount = 1 + (Math.random() < 0.45 ? 1 : 0);
+      if (branchPoints.length > 2 && rng() < 0.9) {
+        const forkCount = 1 + (rng() < 0.45 ? 1 : 0);
         for (let f = 0; f < forkCount; f++) {
-          const forkAnchorIndex = 1 + Math.floor(Math.random() * (branchPoints.length - 2));
+          const forkAnchorIndex = 1 + Math.floor(rng() * (branchPoints.length - 2));
           const forkAnchor = branchPoints[forkAnchorIndex];
-          const forkSign = Math.random() < 0.5 ? -1 : 1;
-          const forkAngle = forkSign * (0.38 + Math.random() * 0.4); // ~22deg to ~45deg from branch
+          const forkSign = rng() < 0.5 ? -1 : 1;
+          const forkAngle = forkSign * (0.38 + rng() * 0.4); // ~22deg to ~45deg from branch
           const forkDirX = branchDirX * Math.cos(forkAngle) - branchDirY * Math.sin(forkAngle);
           const forkDirY = branchDirX * Math.sin(forkAngle) + branchDirY * Math.cos(forkAngle);
           const forkPerpX = -forkDirY;
           const forkPerpY = forkDirX;
-          const forkLen = branchLength * (0.28 + Math.random() * 0.24);
-          const forkSegments = 2 + (Math.random() < 0.4 ? 1 : 0);
+          const forkLen = branchLength * (0.28 + rng() * 0.24);
+          const forkSegments = 2 + (rng() < 0.4 ? 1 : 0);
           const forkPoints: Point[] = [{ x: forkAnchor.x, y: forkAnchor.y }];
 
           for (let s = 1; s <= forkSegments; s++) {
             const t = s / forkSegments;
             const len = forkLen * t;
-            const jitter = (Math.random() - 0.5) * maxOffset * (0.08 + t * 0.05);
+            const jitter = (rng() - 0.5) * maxOffset * (0.08 + t * 0.05);
             forkPoints.push({
               x: forkAnchor.x + forkDirX * len + forkPerpX * jitter,
               y: forkAnchor.y + forkDirY * len + forkPerpY * jitter
@@ -551,16 +574,16 @@ const LightningRays: React.FC<{
           branchPaths.push(toPath(forkPoints));
 
           // Occasional tertiary twig from a secondary fork.
-          if (forkPoints.length > 2 && Math.random() < 0.45) {
-            const twigAnchorIndex = 1 + Math.floor(Math.random() * (forkPoints.length - 2));
+          if (forkPoints.length > 2 && rng() < 0.45) {
+            const twigAnchorIndex = 1 + Math.floor(rng() * (forkPoints.length - 2));
             const twigAnchor = forkPoints[twigAnchorIndex];
-            const twigSign = Math.random() < 0.5 ? -1 : 1;
-            const twigAngle = twigSign * (0.45 + Math.random() * 0.35); // ~26deg to ~46deg
+            const twigSign = rng() < 0.5 ? -1 : 1;
+            const twigAngle = twigSign * (0.45 + rng() * 0.35); // ~26deg to ~46deg
             const twigDirX = forkDirX * Math.cos(twigAngle) - forkDirY * Math.sin(twigAngle);
             const twigDirY = forkDirX * Math.sin(twigAngle) + forkDirY * Math.cos(twigAngle);
-            const twigLen = forkLen * (0.38 + Math.random() * 0.22);
-            const twigEndX = twigAnchor.x + twigDirX * twigLen + forkPerpX * ((Math.random() - 0.5) * maxOffset * 0.05);
-            const twigEndY = twigAnchor.y + twigDirY * twigLen + forkPerpY * ((Math.random() - 0.5) * maxOffset * 0.05);
+            const twigLen = forkLen * (0.38 + rng() * 0.22);
+            const twigEndX = twigAnchor.x + twigDirX * twigLen + forkPerpX * ((rng() - 0.5) * maxOffset * 0.05);
+            const twigEndY = twigAnchor.y + twigDirY * twigLen + forkPerpY * ((rng() - 0.5) * maxOffset * 0.05);
             branchPaths.push(`M ${twigAnchor.x} ${twigAnchor.y} L ${twigEndX} ${twigEndY}`);
           }
         }
@@ -570,8 +593,8 @@ const LightningRays: React.FC<{
     return {
       mainPath: toPath(points),
       branchPaths,
-      intensity: 0.72 + Math.random() * 0.2,
-      thickness: 1.5 + Math.random() * 0.45
+      intensity: 0.72 + rng() * 0.2,
+      thickness: 1.5 + rng() * 0.45
     };
   };
 
@@ -583,16 +606,18 @@ const LightningRays: React.FC<{
       {Array.from(affectedCells).map((cellKey, targetIndex) => {
         const [cx, cy] = cellKey.split(',').map(Number);
         if (cx === booster.x && cy === booster.y) return null;
+        const cellSeed = hashStringToSeed(`${booster.id}:${cellKey}:${targetIndex}:${tick}`);
+        const cellRandom = createSeededRandom(cellSeed);
 
         const targetMetrics = getBoardCellMetrics(board, cx, cy);
         const cellCenterX = targetMetrics.centerX;
         const cellCenterY = targetMetrics.centerY;
         const targetCellSize = targetMetrics.width;
-        const sourceX = boosterX + ((Math.random() - 0.5) * 3.2);
-        const sourceY = boosterY + ((Math.random() - 0.5) * 3.2);
+        const sourceX = boosterX + ((cellRandom() - 0.5) * 3.2);
+        const sourceY = boosterY + ((cellRandom() - 0.5) * 3.2);
 
         // Some targets get one strike, others get 2-4 simultaneous strikes.
-        const roll = Math.random();
+        const roll = cellRandom();
         const boltCount = roll < 0.55 ? 1 : roll < 0.8 ? 2 : roll < 0.94 ? 3 : 4;
 
         // Distinct landing zones inside a tile so multi-strikes don't hit the same exact point.
@@ -610,20 +635,20 @@ const LightningRays: React.FC<{
 
         const selectedSlots = boltCount === 1
           ? [{ x: 0, y: 0 }]
-          : [...impactSlots]
-              .sort(() => Math.random() - 0.5)
-              .slice(0, boltCount);
+          : shuffleWithRandom(impactSlots, cellRandom).slice(0, boltCount);
 
         const landingPoints = selectedSlots.map(slot => ({
-          x: cellCenterX + (slot.x * targetCellSize) + ((Math.random() - 0.5) * targetCellSize * 0.06),
-          y: cellCenterY + (slot.y * targetCellSize) + ((Math.random() - 0.5) * targetCellSize * 0.06)
+          x: cellCenterX + (slot.x * targetCellSize) + ((cellRandom() - 0.5) * targetCellSize * 0.06),
+          y: cellCenterY + (slot.y * targetCellSize) + ((cellRandom() - 0.5) * targetCellSize * 0.06)
         }));
 
         return (
           <g key={`${cellKey}-${tick}`} style={{ mixBlendMode: 'screen' }}>
             {landingPoints.map((landing, boltIndex) => {
-              const bolt = generateDetailedBolt(sourceX, sourceY, landing.x, landing.y);
-              const widthScale = 0.78 + (Math.random() * 0.72);
+              const boltSeed = hashStringToSeed(`${booster.id}:${cellKey}:${tick}:${boltIndex}`);
+              const boltRandom = createSeededRandom(boltSeed);
+              const bolt = generateDetailedBolt(sourceX, sourceY, landing.x, landing.y, boltRandom);
+              const widthScale = 0.78 + (boltRandom() * 0.72);
               return (
                 <g key={`${cellKey}-${tick}-${boltIndex}`}>
                   <path
@@ -666,7 +691,12 @@ const LightningRays: React.FC<{
       })}
     </svg>
   );
-};
+}, (prevProps, nextProps) => (
+  prevProps.phase === nextProps.phase
+  && prevProps.booster.id === nextProps.booster.id
+  && prevProps.affectedCells === nextProps.affectedCells
+  && prevProps.boardRef === nextProps.boardRef
+));
 
 const SuperballForeground: React.FC<{
   superballAnimation: SuperballAnimationState | null;
@@ -1174,45 +1204,40 @@ export const Game: React.FC = () => {
     ));
   }, [isInteractionLocked]);
 
-  // Animation Loop
-  useEffect(() => {
-    let animationFrameId: number;
-    const updateEffects = () => {
-      setParticles(prev => {
-        if (prev.length === 0) return prev;
-        return prev.map(p => ({
-          ...p,
-          x: p.x + p.vx,
-          y: p.y + p.vy,
-          vy: p.vy + 0.5, // Gravity
-          life: p.life - 1
-        })).filter(p => p.life > 0);
-      });
+  // Shared transient-effects loop using delta-time to keep animation speed stable.
+  useAnimationFrame(({ deltaMs }) => {
+    const frameScale = deltaMs / FRAME_MS_60FPS;
+    if (!Number.isFinite(frameScale) || frameScale <= 0) return;
 
-      setFloatingTexts(prev => {
-        if (prev.length === 0) return prev;
-        return prev.map(t => ({
-          ...t,
-          y: t.y - 1.5, // Float up
-          life: t.life - 1
-        })).filter(t => t.life > 0);
-      });
+    setParticles(prev => {
+      if (prev.length === 0) return prev;
+      return prev.map(p => ({
+        ...p,
+        x: p.x + (p.vx * frameScale),
+        y: p.y + (p.vy * frameScale),
+        vy: p.vy + (0.5 * frameScale), // Gravity
+        life: p.life - frameScale
+      })).filter(p => p.life > 0);
+    });
 
-      // Update returning piece animation
-      setReturningPiece(prev => {
-        if (!prev) return prev;
-        const newProgress = prev.progress + 0.12; // Fast animation
-        if (newProgress >= 1) {
-          return null; // Animation complete
-        }
-        return { ...prev, progress: newProgress };
-      });
+    setFloatingTexts(prev => {
+      if (prev.length === 0) return prev;
+      return prev.map(t => ({
+        ...t,
+        y: t.y - (1.5 * frameScale), // Float up
+        life: t.life - frameScale
+      })).filter(t => t.life > 0);
+    });
 
-      animationFrameId = requestAnimationFrame(updateEffects);
-    };
-    animationFrameId = requestAnimationFrame(updateEffects);
-    return () => cancelAnimationFrame(animationFrameId);
-  }, []);
+    setReturningPiece(prev => {
+      if (!prev) return prev;
+      const newProgress = prev.progress + (0.12 * frameScale); // Fast animation
+      if (newProgress >= 1) {
+        return null; // Animation complete
+      }
+      return { ...prev, progress: newProgress };
+    });
+  }, { active: true });
 
   // Sync high score
   useEffect(() => {
@@ -4710,6 +4735,7 @@ export const Game: React.FC = () => {
         <>
           <PowerupDarkOverlay opacity={0.7} zIndex={30} pointerEvents="none" />
           <LightningRays
+            key={`lightning-${superballAnimation.booster.id}-${superballAnimation.phase}`}
             booster={superballAnimation.booster}
             affectedCells={superballAnimation.affectedCells}
             boardRef={boardRef}
