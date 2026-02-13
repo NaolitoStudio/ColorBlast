@@ -1,7 +1,7 @@
 import { RefObject, useEffect, useRef, useState } from 'react';
 import { GRID_SIZE } from '../../constants';
 import { solveProportionalStack } from './panelStack';
-import { estimateNineSliceBaseBorderWidth, resolveNineSliceDensityFactor } from '../theme/nineSliceMath';
+import { resolveNineSliceDensityFactor } from '../theme/nineSliceMath';
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const STACK_MIN_SCALE = 0.12;
@@ -15,6 +15,7 @@ export type ResponsiveMetrics = {
   layoutGap: number;
   layoutPadding: number;
   contentScale: number;
+  panelBorderBasePx: number;
   boardPanelWidthPx: number;
   boardCellSize: number;
   boardWidthPercent: number;
@@ -58,6 +59,7 @@ type UseResponsiveMetricsArgs = {
   boardPanelDprReference?: number;
   boardPanelDprMinFactor?: number;
   boardPanelDprMaxFactor?: number;
+  boardPaddingMultiplier?: number;
   rackSlotAspect?: number;
 };
 
@@ -76,6 +78,7 @@ type MetricInput = {
   boardPanelDprReference: number;
   boardPanelDprMinFactor: number;
   boardPanelDprMaxFactor: number;
+  boardPaddingMultiplier: number;
   rackSlotAspect: number;
   isViewportStable: boolean;
 };
@@ -124,6 +127,7 @@ const createMetrics = ({
   boardPanelDprReference,
   boardPanelDprMinFactor,
   boardPanelDprMaxFactor,
+  boardPaddingMultiplier,
   rackSlotAspect,
   isViewportStable,
 }: MetricInput): ResponsiveMetrics => {
@@ -141,6 +145,7 @@ const createMetrics = ({
     dprMaxFactor: boardPanelDprMaxFactor,
   });
   const boardPanelEffectiveScale = boardPanelScale * boardPanelDensityFactor;
+  const safeBoardPaddingMultiplier = clamp(boardPaddingMultiplier, 0.5, 4);
 
   let layoutPadding = clamp(minDim * 0.018 * densityCompensation, 8, 26);
   let layoutGap = clamp(minDim * 0.019 * densityCompensation, 8, 24);
@@ -150,6 +155,7 @@ const createMetrics = ({
   let contentWidth = Math.max(1, safeWidth - (layoutPadding * 2));
   let boardFrame = createFallbackFrame('board', contentWidth, boardAspect, 1);
   let rackFrame = createFallbackFrame('rack', contentWidth, rackAspect, 1);
+  let panelBorderBasePx = 16;
   let boardInnerPadding = 0;
   let boardCellGap = 0;
   let boardCellSize = 1;
@@ -197,14 +203,16 @@ const createMetrics = ({
     const boardRackSpacer = stack.frames.space_board_rack
       ?? createFallbackFrame('space_board_rack', contentWidth, spacerBoardRackAspect, stack.scale);
 
-    const boardEstimatedBorder = estimateNineSliceBaseBorderWidth(safeWidth, safeHeight) * boardPanelEffectiveScale;
-    const boardMinInset = boardFrame.width * 0.0144;
-    const boardMaxInset = boardFrame.width * 0.32;
-    // Keep board content inset tightly coupled with actual border thickness so
-    // high NineSlice scales preserve the same visual proportion around the grid.
-    const boardPreferredInset = Math.max(boardMinInset, boardEstimatedBorder * 0.96);
+    const boardNominalCellSize = Math.max(1, boardFrame.width / GRID_SIZE);
+    const boardScaleUnit = boardNominalCellSize;
+    const safePanelDensityFactor = Math.max(0.0001, boardPanelDensityFactor);
+    panelBorderBasePx = clamp((boardScaleUnit * 0.46) / safePanelDensityFactor, 6, 40);
+    // Grid-driven padding only: same visual proportion across devices.
+    const boardMinInset = boardScaleUnit * 0.18;
+    const boardMaxInset = boardScaleUnit * 2.4;
+    const boardResolvedInset = (boardScaleUnit * 0.36) * safeBoardPaddingMultiplier;
     boardInnerPadding = clamp(
-      boardPreferredInset,
+      boardResolvedInset,
       boardMinInset,
       boardMaxInset
     );
@@ -220,37 +228,37 @@ const createMetrics = ({
       (boardGridWidth - (boardCellGap * (GRID_SIZE - 1))) / GRID_SIZE
     );
 
-    const nextLayoutPadding = clamp(boardCellSize * 0.34, 8, 26);
-    const gapFromCell = clamp(boardCellSize * 0.28, 8, boardCellSize * 0.58);
+    const nextLayoutPadding = clamp(boardScaleUnit * 0.34, 8, 26);
+    const gapFromCell = clamp(boardScaleUnit * 0.28, 8, boardScaleUnit * 0.58);
     const gapFromSpacerPanels = (headerBoardSpacer.height + boardRackSpacer.height) * 0.5;
     const nextLayoutGap = (gapFromCell + gapFromSpacerPanels) * 0.5;
 
-    const minPowerupGap = Math.max(4, boardCellSize * 0.08);
+    const minPowerupGap = Math.max(4, boardScaleUnit * 0.08);
     const maxButtonByWidth = Math.max(
       28,
       (contentWidth - (Math.max(0, safePowerupCount - 1) * minPowerupGap)) / safePowerupCount
     );
     const effectiveMinTouch = Math.min(minTouchTarget, maxButtonByWidth);
-    const powerupTargetButton = clamp(boardCellSize * 1.32, effectiveMinTouch, boardCellSize * 1.7);
+    const powerupTargetButton = clamp(boardScaleUnit * 1.32, effectiveMinTouch, boardScaleUnit * 1.7);
     powerupButtonSize = clamp(
       powerupTargetButton,
       Math.max(32, effectiveMinTouch),
       maxButtonByWidth
     );
 
-    const preferredGap = clamp(powerupButtonSize * 0.22, minPowerupGap, boardCellSize * 0.45);
+    const preferredGap = clamp(powerupButtonSize * 0.22, minPowerupGap, boardScaleUnit * 0.45);
     const maxGapByWidth = safePowerupCount > 1
       ? Math.max(0, (contentWidth - (powerupButtonSize * safePowerupCount)) / (safePowerupCount - 1))
       : 0;
     powerupGap = safePowerupCount > 1 ? Math.min(preferredGap, maxGapByWidth) : 0;
 
     powerupRowWidth = (powerupButtonSize * safePowerupCount) + (powerupGap * Math.max(0, safePowerupCount - 1));
-    powerupIconSize = clamp(powerupButtonSize * 0.45, boardCellSize * 0.56, powerupButtonSize * 0.58);
-    powerupBadgeSize = clamp(powerupButtonSize * 0.33, boardCellSize * 0.44, powerupButtonSize * 0.43);
-    powerupBadgeFontSize = clamp(powerupBadgeSize * 0.46, boardCellSize * 0.18, powerupBadgeSize * 0.58);
-    powerupTopPadding = Math.max(nextLayoutGap * 0.2, boardCellSize * 0.16);
-    powerupBottomPadding = Math.max(nextLayoutGap * 0.18, boardCellSize * 0.14);
-    powerupBottomOffset = Math.max(nextLayoutPadding * 0.4, bottomSafeInset + (boardCellSize * 0.14));
+    powerupIconSize = clamp(powerupButtonSize * 0.45, boardScaleUnit * 0.56, powerupButtonSize * 0.58);
+    powerupBadgeSize = clamp(powerupButtonSize * 0.33, boardScaleUnit * 0.44, powerupButtonSize * 0.43);
+    powerupBadgeFontSize = clamp(powerupBadgeSize * 0.46, boardScaleUnit * 0.18, powerupBadgeSize * 0.58);
+    powerupTopPadding = Math.max(nextLayoutGap * 0.2, boardScaleUnit * 0.16);
+    powerupBottomPadding = Math.max(nextLayoutGap * 0.18, boardScaleUnit * 0.14);
+    powerupBottomOffset = Math.max(nextLayoutPadding * 0.4, bottomSafeInset + (boardScaleUnit * 0.14));
 
     const nextReservedBottomSpace =
       powerupBottomOffset +
@@ -260,16 +268,16 @@ const createMetrics = ({
       (nextLayoutGap * 0.62);
 
     const rackScaledWidth = rackFrame.width;
-    rackPaddingX = clamp(boardCellSize * 0.62, rackScaledWidth * 0.02, rackScaledWidth * 0.09);
-    rackSlotGap = clamp(boardCellSize * 0.22, rackScaledWidth * 0.004, rackScaledWidth * 0.028);
+    rackPaddingX = clamp(boardScaleUnit * 0.62, rackScaledWidth * 0.02, rackScaledWidth * 0.09);
+    rackSlotGap = clamp(boardScaleUnit * 0.22, rackScaledWidth * 0.004, rackScaledWidth * 0.028);
     rackSlotAspectRatio = Math.max(0.1, rackSlotAspect);
     const slotWidthByRack = Math.max(1, (rackScaledWidth - (rackPaddingX * 2) - (rackSlotGap * 2)) / 3);
-    const rackVerticalPadding = Math.max(nextLayoutGap * 0.28, boardCellSize * 0.2);
+    const rackVerticalPadding = Math.max(nextLayoutGap * 0.28, boardScaleUnit * 0.2);
     const slotHeightByRack = Math.max(1, rackFrame.height - rackVerticalPadding);
     const slotWidthByHeight = slotHeightByRack * rackSlotAspectRatio;
     const maxRackSlotWidth = Math.max(1, Math.min(slotWidthByRack, slotWidthByHeight));
-    const minRackSlotWidth = Math.max(1, Math.min(boardCellSize * 1.35, maxRackSlotWidth));
-    rackSlotWidth = clamp(boardCellSize * 2.05, minRackSlotWidth, maxRackSlotWidth);
+    const minRackSlotWidth = Math.max(1, Math.min(boardScaleUnit * 1.35, maxRackSlotWidth));
+    rackSlotWidth = clamp(boardScaleUnit * 2.05, minRackSlotWidth, maxRackSlotWidth);
     rackSlotHeight = rackSlotWidth / rackSlotAspectRatio;
     rackPieceSize = Math.min(rackSlotWidth, rackSlotHeight) * 0.82;
 
@@ -293,6 +301,7 @@ const createMetrics = ({
     layoutGap,
     layoutPadding,
     contentScale: stackScale,
+    panelBorderBasePx,
     boardPanelWidthPx: boardFrame.width,
     boardCellSize,
     boardWidthPercent,
@@ -351,6 +360,7 @@ export const useResponsiveMetrics = ({
   boardPanelDprReference = 2,
   boardPanelDprMinFactor = 0.8,
   boardPanelDprMaxFactor = 1.25,
+  boardPaddingMultiplier = 1,
   rackSlotAspect = 1,
 }: UseResponsiveMetricsArgs): ResponsiveMetrics => {
   const [metrics, setMetrics] = useState<ResponsiveMetrics>(() => {
@@ -370,6 +380,7 @@ export const useResponsiveMetrics = ({
       boardPanelDprReference,
       boardPanelDprMinFactor,
       boardPanelDprMaxFactor,
+      boardPaddingMultiplier,
       rackSlotAspect,
       isViewportStable: true,
     });
@@ -407,6 +418,7 @@ export const useResponsiveMetrics = ({
         boardPanelDprReference,
         boardPanelDprMinFactor,
         boardPanelDprMaxFactor,
+        boardPaddingMultiplier,
         rackSlotAspect,
         isViewportStable: overrideStable !== undefined ? overrideStable : prev.isViewportStable,
       }));
@@ -480,6 +492,7 @@ export const useResponsiveMetrics = ({
     boardPanelDprReference,
     boardPanelScale,
     boardPanelScaleMode,
+    boardPaddingMultiplier,
     headerAspect,
     headerRef,
     layoutRef,

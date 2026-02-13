@@ -53,10 +53,14 @@ const LAYOUT_DEBUG_MAX_ASPECT = 80;
 const NINESLICE_SCALE_MULTIPLIER_MIN = 0.6;
 const NINESLICE_SCALE_MULTIPLIER_MAX = 3;
 const NINESLICE_SCALE_MULTIPLIER_STEP = 0.01;
+const BOARD_PADDING_MULTIPLIER_MIN = 0.5;
+const BOARD_PADDING_MULTIPLIER_MAX = 4;
+const BOARD_PADDING_MULTIPLIER_STEP = 0.01;
 
 type LayoutDebugOverrides = {
   spacerAspect: number;
   nineSliceScaleMultiplier: number;
+  boardPaddingMultiplier: number;
 };
 
 const sanitizeLayoutAspect = (value: number): number => {
@@ -81,16 +85,29 @@ const sanitizeNineSliceScaleMultiplier = (value: number): number => {
   return Math.round(clamped * 100) / 100;
 };
 
+const sanitizeBoardPaddingMultiplier = (value: number): number => {
+  if (!Number.isFinite(value)) return 1;
+  const clamped = Math.max(
+    BOARD_PADDING_MULTIPLIER_MIN,
+    Math.min(BOARD_PADDING_MULTIPLIER_MAX, value)
+  );
+  return Math.round(clamped * 100) / 100;
+};
+
 const sanitizeLayoutDebugOverrides = (
   value: Partial<LayoutDebugOverrides> | null | undefined
 ): LayoutDebugOverrides | null => {
   if (!value) return null;
   const spacerAspect = value.spacerAspect;
   const nineSliceScaleMultiplier = value.nineSliceScaleMultiplier;
+  const boardPaddingMultiplier = value.boardPaddingMultiplier;
   if (typeof spacerAspect !== 'number' || typeof nineSliceScaleMultiplier !== 'number') return null;
   return {
     spacerAspect: sanitizeLayoutAspect(spacerAspect),
     nineSliceScaleMultiplier: sanitizeNineSliceScaleMultiplier(nineSliceScaleMultiplier),
+    boardPaddingMultiplier: sanitizeBoardPaddingMultiplier(
+      typeof boardPaddingMultiplier === 'number' ? boardPaddingMultiplier : 1
+    ),
   };
 };
 
@@ -777,6 +794,9 @@ export const Game: React.FC = () => {
     nineSliceScaleMultiplier: sanitizeNineSliceScaleMultiplier(
       layoutDebugOverrides?.nineSliceScaleMultiplier ?? 1
     ),
+    boardPaddingMultiplier: sanitizeBoardPaddingMultiplier(
+      layoutDebugOverrides?.boardPaddingMultiplier ?? 1
+    ),
   }), [
     layoutDebugOverrides,
     themeSpacerBaseAspect,
@@ -892,6 +912,7 @@ export const Game: React.FC = () => {
     boardPanelDprReference: boardPanelConfig.dprReference ?? 2,
     boardPanelDprMinFactor: boardPanelConfig.dprMinFactor ?? 0.8,
     boardPanelDprMaxFactor: boardPanelConfig.dprMaxFactor ?? 1.25,
+    boardPaddingMultiplier: appliedLayoutDebugOverrides.boardPaddingMultiplier,
     rackSlotAspect: UI_ASSET_ASPECT_RATIOS.CONTAINER_NEXT_PIECE
   });
 
@@ -3436,7 +3457,9 @@ export const Game: React.FC = () => {
       layoutGap: Number(responsive.layoutGap.toFixed(2)),
       boardCellSize: Number(responsive.boardCellSize.toFixed(2)),
       boardInnerPadding: Number(responsive.boardInnerPadding.toFixed(2)),
+      boardInnerPaddingInCells: Number((responsive.boardInnerPadding / Math.max(1, responsive.boardCellSize)).toFixed(3)),
       boardInnerPaddingRatio: Number((responsive.boardInnerPadding / Math.max(1, responsive.boardPanelWidthPx)).toFixed(4)),
+      panelBorderBasePx: Number(responsive.panelBorderBasePx.toFixed(2)),
       boardPanelWidthPx: Number(responsive.boardPanelWidthPx.toFixed(2)),
       boardWidthPercent: Number(responsive.boardWidthPercent.toFixed(2)),
       rackWidthPercent: Number(responsive.rackWidthPercent.toFixed(2)),
@@ -3454,6 +3477,7 @@ export const Game: React.FC = () => {
     nineSliceScaleMultiplier,
     responsive.boardCellSize,
     responsive.boardInnerPadding,
+    responsive.panelBorderBasePx,
     responsive.boardPanelWidthPx,
     responsive.boardWidthPercent,
     responsive.isViewportStable,
@@ -3815,6 +3839,7 @@ export const Game: React.FC = () => {
         ref={headerCardRef}
         src={boardPanelSrc}
         {...headerPanelConfig}
+        baseBorderWidthPx={responsive.panelBorderBasePx}
         widthPercent={responsive.boardWidthPercent}
         className="relative overflow-hidden"
         style={{
@@ -3940,6 +3965,7 @@ export const Game: React.FC = () => {
           ref={boardRef}
           src={boardPanelSrc}
           {...boardPanelConfig}
+          baseBorderWidthPx={responsive.panelBorderBasePx}
           widthPercent={responsive.boardWidthPercent}
           className={`relative ${isShaking ? 'shake-animation' : ''}`}
           style={{
@@ -4329,6 +4355,7 @@ export const Game: React.FC = () => {
         <ResponsiveNineSlicePanel
           src={rackPanelSrc}
           {...rackPanelConfig}
+          baseBorderWidthPx={responsive.panelBorderBasePx}
           widthPercent={responsive.rackWidthPercent}
           className="w-full flex justify-center items-center"
           style={{
@@ -4702,10 +4729,15 @@ export const Game: React.FC = () => {
         maxScaleMultiplier={NINESLICE_SCALE_MULTIPLIER_MAX}
         scaleMultiplierStep={NINESLICE_SCALE_MULTIPLIER_STEP}
         nineSliceScaleMultiplier={appliedLayoutDebugOverrides.nineSliceScaleMultiplier}
+        minPaddingMultiplier={BOARD_PADDING_MULTIPLIER_MIN}
+        maxPaddingMultiplier={BOARD_PADDING_MULTIPLIER_MAX}
+        paddingMultiplierStep={BOARD_PADDING_MULTIPLIER_STEP}
+        boardPaddingMultiplier={appliedLayoutDebugOverrides.boardPaddingMultiplier}
         copyStatus={layoutDebugCopyStatus}
         debugText={layoutDebugText}
         onChangeSpacerAspect={(value) => updateLayoutDebugOverride({ spacerAspect: value })}
         onChangeNineSliceScaleMultiplier={(value) => updateLayoutDebugOverride({ nineSliceScaleMultiplier: value })}
+        onChangeBoardPaddingMultiplier={(value) => updateLayoutDebugOverride({ boardPaddingMultiplier: value })}
         onCopy={handleCopyLayoutDebug}
         onReset={handleResetLayoutDebug}
         onHide={() => setIsLayoutDebugVisible(false)}

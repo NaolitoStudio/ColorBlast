@@ -23,6 +23,8 @@ interface NineSliceProps extends NineSliceConfig {
   onClick?: (e: React.MouseEvent) => void;
   /** Aspect ratio fijo (ancho/alto). Ej: 1 = cuadrado, 3 = 3:1. undefined = libre */
   aspectRatio?: number;
+  /** Base de grosor para los bordes en px (si no se define, usa estimación global) */
+  baseBorderWidthPx?: number;
 }
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
@@ -97,6 +99,7 @@ export const NineSlice = forwardRef<HTMLDivElement, NineSliceProps>(({
   dprMaxFactor = DEFAULT_NINESLICE_CONFIG.dprMaxFactor,
   repeat = DEFAULT_NINESLICE_CONFIG.repeat,
   aspectRatio,
+  baseBorderWidthPx,
   className = '',
   style,
   children,
@@ -220,7 +223,7 @@ export const NineSlice = forwardRef<HTMLDivElement, NineSliceProps>(({
   const destinationSlices = useMemo<Slices | null>(() => {
     if (hostSize.width <= 0 || hostSize.height <= 0) return null;
 
-    const baseBorderWidth = estimateNineSliceBaseBorderWidth();
+    const baseBorderWidth = baseBorderWidthPx ?? estimateNineSliceBaseBorderWidth();
     let left = Math.max(1, Math.round(baseBorderWidth * effectiveScale));
     let right = left;
     let top = left;
@@ -230,7 +233,7 @@ export const NineSlice = forwardRef<HTMLDivElement, NineSliceProps>(({
     [top, bottom] = reducePairToMax(top, bottom, Math.max(1, hostSize.height - 1));
 
     return { left, right, top, bottom };
-  }, [effectiveScale, hostSize.height, hostSize.width]);
+  }, [baseBorderWidthPx, effectiveScale, hostSize.height, hostSize.width]);
 
   const shouldUseCanvas = Boolean(
     image &&
@@ -242,9 +245,9 @@ export const NineSlice = forwardRef<HTMLDivElement, NineSliceProps>(({
   );
 
   const fallbackBorderWidthPx = useMemo(() => {
-    const baseBorderWidth = estimateNineSliceBaseBorderWidth();
+    const baseBorderWidth = baseBorderWidthPx ?? estimateNineSliceBaseBorderWidth();
     return Math.max(1, Math.round(baseBorderWidth * effectiveScale));
-  }, [effectiveScale, hostSize.height, hostSize.width]);
+  }, [baseBorderWidthPx, effectiveScale, hostSize.height, hostSize.width]);
 
   useEffect(() => {
     if (!shouldUseCanvas || !image || !sourceSize || !sourceSlices || !destinationSlices || !canvasRef.current) {

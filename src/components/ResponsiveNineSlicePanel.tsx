@@ -5,6 +5,7 @@ import { NineSliceConfig } from '../theme/types';
 interface ResponsiveNineSlicePanelProps extends NineSliceConfig {
   src: string;
   widthPercent: number;
+  baseBorderWidthPx?: number;
   className?: string;
   style?: React.CSSProperties;
   children?: React.ReactNode;

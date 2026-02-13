@@ -11,10 +11,15 @@ type LayoutDebugPanelProps = {
   maxScaleMultiplier?: number;
   scaleMultiplierStep?: number;
   nineSliceScaleMultiplier: number;
+  minPaddingMultiplier?: number;
+  maxPaddingMultiplier?: number;
+  paddingMultiplierStep?: number;
+  boardPaddingMultiplier: number;
   copyStatus: LayoutDebugCopyStatus;
   debugText: string;
   onChangeSpacerAspect: (value: number) => void;
   onChangeNineSliceScaleMultiplier: (value: number) => void;
+  onChangeBoardPaddingMultiplier: (value: number) => void;
   onCopy: () => void;
   onReset: () => void;
   onHide: () => void;
@@ -29,10 +34,15 @@ export const LayoutDebugPanel: React.FC<LayoutDebugPanelProps> = ({
   maxScaleMultiplier = 3,
   scaleMultiplierStep = 0.01,
   nineSliceScaleMultiplier,
+  minPaddingMultiplier = 0.5,
+  maxPaddingMultiplier = 4,
+  paddingMultiplierStep = 0.01,
+  boardPaddingMultiplier,
   copyStatus,
   debugText,
   onChangeSpacerAspect,
   onChangeNineSliceScaleMultiplier,
+  onChangeBoardPaddingMultiplier,
   onCopy,
   onReset,
   onHide,
@@ -40,14 +50,14 @@ export const LayoutDebugPanel: React.FC<LayoutDebugPanelProps> = ({
   if (!visible) return null;
 
   return (
-    <div className="fixed top-3 right-3 z-[230] w-[360px] max-w-[calc(100vw-1.5rem)] rounded-2xl border border-slate-400/30 bg-slate-950/90 p-3 text-white shadow-2xl backdrop-blur-sm">
+    <div className="fixed top-3 right-3 z-[230] w-[360px] max-w-[calc(100vw-1.5rem)] rounded-2xl border border-slate-300/35 bg-slate-950/58 p-3 text-white shadow-2xl backdrop-blur-md">
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-sm font-black tracking-wide">Layout Debug</h3>
         <button
           onClick={onHide}
-          className="rounded-md bg-slate-700/80 px-2 py-1 text-[11px] font-bold hover:bg-slate-600"
+          className="rounded-md border border-white/35 bg-white/16 px-2 py-1 text-[11px] font-bold text-white backdrop-blur-sm hover:bg-white/24"
         >
-          Hide
+          Minimize
         </button>
       </div>
 
@@ -100,6 +110,32 @@ export const LayoutDebugPanel: React.FC<LayoutDebugPanelProps> = ({
               step={scaleMultiplierStep}
               value={nineSliceScaleMultiplier}
               onChange={(event) => onChangeNineSliceScaleMultiplier(Number(event.target.value))}
+              className="w-16 rounded-md border border-slate-500 bg-slate-900 px-1.5 py-1 text-right text-xs"
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-[11px] font-semibold text-slate-300">
+            Board Padding Multiplier
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              type="range"
+              min={minPaddingMultiplier}
+              max={maxPaddingMultiplier}
+              step={paddingMultiplierStep}
+              value={boardPaddingMultiplier}
+              onChange={(event) => onChangeBoardPaddingMultiplier(Number(event.target.value))}
+              className="w-full"
+            />
+            <input
+              type="number"
+              min={minPaddingMultiplier}
+              max={maxPaddingMultiplier}
+              step={paddingMultiplierStep}
+              value={boardPaddingMultiplier}
+              onChange={(event) => onChangeBoardPaddingMultiplier(Number(event.target.value))}
               className="w-16 rounded-md border border-slate-500 bg-slate-900 px-1.5 py-1 text-right text-xs"
             />
           </div>
