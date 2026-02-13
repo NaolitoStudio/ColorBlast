@@ -203,12 +203,55 @@ export const canPieceCreateMatch = (grid: (TileData | null)[][], piece: PieceDat
   return false;
 };
 
+export const getShapeSignature = (shape: Point[]): string => {
+  if (shape.length === 0) return '';
+
+  const normalize = (points: Point[]): Point[] => {
+    const minX = Math.min(...points.map(point => point.x));
+    const minY = Math.min(...points.map(point => point.y));
+    return points
+      .map(point => ({ x: point.x - minX, y: point.y - minY }))
+      .sort((a, b) => (a.y - b.y) || (a.x - b.x));
+  };
+
+  const toSignature = (points: Point[]): string =>
+    points.map(point => `${point.x},${point.y}`).join('|');
+
+  const rotate90 = (points: Point[]): Point[] =>
+    points.map(point => ({ x: -point.y, y: point.x }));
+
+  const signatures: string[] = [];
+  let rotated = shape.map(point => ({ ...point }));
+
+  for (let i = 0; i < 4; i++) {
+    signatures.push(toSignature(normalize(rotated)));
+    rotated = rotate90(rotated);
+  }
+
+  return signatures.sort()[0];
+};
+
+export const getPieceShapeSignature = (piece: PieceData): string => getShapeSignature(piece.shape);
+
+type GeneratePieceOptions = {
+  excludedShapeSignatures?: Set<string>;
+};
+
 /**
  * Generate a piece that can create valid color combinations on the grid
  * Tries to assign colors that will allow matches
  */
-export const generatePiece = (grid?: (TileData | null)[][], level: number = 1): PieceData => {
+export const generatePiece = (
+  grid?: (TileData | null)[][],
+  level: number = 1,
+  options?: GeneratePieceOptions
+): PieceData => {
   const levelColors = getColorsForLevel(level);
+  const excludedShapeSignatures = options?.excludedShapeSignatures;
+  const eligibleShapes = excludedShapeSignatures && excludedShapeSignatures.size > 0
+    ? SHAPES.filter(shape => !excludedShapeSignatures.has(getShapeSignature(shape)))
+    : SHAPES;
+  const shapePool = eligibleShapes.length > 0 ? eligibleShapes : SHAPES;
 
   const createPieceFromShape = (shape: Point[], colors?: Color[]): PieceData => ({
     id: Math.random().toString(36).substr(2, 9),
@@ -218,12 +261,12 @@ export const generatePiece = (grid?: (TileData | null)[][], level: number = 1): 
 
   // If no grid provided, just return random piece (for initial load)
   if (!grid) {
-    const shape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
+    const shape = shapePool[Math.floor(Math.random() * shapePool.length)];
     return createPieceFromShape(shape);
   }
 
   // Shuffle shapes for randomness
-  const shuffledShapes = [...SHAPES].sort(() => Math.random() - 0.5);
+  const shuffledShapes = [...shapePool].sort(() => Math.random() - 0.5);
 
   // Try each shape until we find one that can create a match
   for (const shape of shuffledShapes) {
@@ -254,7 +297,7 @@ export const generatePiece = (grid?: (TileData | null)[][], level: number = 1): 
     }
   }
 
-  return createPieceFromShape(shuffledShapes[0]);
+  return createPieceFromShape(shuffledShapes[0] ?? SHAPES[0]);
 };
 
 /**
@@ -337,10 +380,12 @@ const createStrategicColoredPiece = (
 export const generateValidHand = (grid: (TileData | null)[][], level: number = 1): PieceData[] => {
   const hand: PieceData[] = [];
   let workingGrid = grid.map(row => [...row]);
+  const usedShapeSignatures = new Set<string>();
 
   for (let i = 0; i < 3; i++) {
-    const piece = generatePiece(workingGrid, level);
+    const piece = generatePiece(workingGrid, level, { excludedShapeSignatures: usedShapeSignatures });
     hand.push(piece);
+    usedShapeSignatures.add(getPieceShapeSignature(piece));
 
     // Simulate placing this piece to ensure next pieces also have room
     // Find first valid position and "reserve" it

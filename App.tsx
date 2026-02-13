@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect } from 'react';
 import { flushSync } from 'react-dom';
 import { GameState, PieceData, Point, Color, LevelObjective, Booster, BoosterType } from './types';
-import { createRandomGrid, generatePiece, generateValidHand, canPlacePiece, findMatchGroups, findGroupCenter, getBombExplosionPoints, isGameOver, calculateScore, initializeObjectives, getAdjacentToMatches, addRandomBlocks, AddedBlock, getColorsForLevel } from './utils/gameLogic';
+import { createRandomGrid, generatePiece, generateValidHand, canPlacePiece, findMatchGroups, findGroupCenter, getBombExplosionPoints, isGameOver, calculateScore, initializeObjectives, getAdjacentToMatches, addRandomBlocks, AddedBlock, getColorsForLevel, getPieceShapeSignature } from './utils/gameLogic';
 import { GRID_SIZE, getLevelConfig } from './constants';
 import { ICONS, UI_ASSETS, UI_ASSET_ASPECT_RATIOS } from './assets';
 import { useAudio } from './utils/useAudio';
@@ -1880,22 +1880,25 @@ const App: React.FC = () => {
     boosters: Booster[]
   ): PieceData[] => {
     const hand: PieceData[] = [];
+    const usedShapeSignatures = new Set<string>();
     let attempts = 0;
     const maxAttempts = 520;
 
     while (hand.length < 3 && attempts < maxAttempts) {
-      const candidate = generatePiece(grid, level);
+      const candidate = generatePiece(grid, level, { excludedShapeSignatures: usedShapeSignatures });
       if (canPieceCreateMatchWithBoosters(grid, candidate, boosters)) {
         hand.push(candidate);
+        usedShapeSignatures.add(getPieceShapeSignature(candidate));
       }
       attempts++;
     }
 
     // Fallback only if current board state makes strict generation infeasible.
     while (hand.length < 3) {
-      const fallback = generatePiece(grid, level);
+      const fallback = generatePiece(grid, level, { excludedShapeSignatures: usedShapeSignatures });
       if (canPieceFitWithBoosters(grid, fallback, boosters)) {
         hand.push(fallback);
+        usedShapeSignatures.add(getPieceShapeSignature(fallback));
       } else {
         break;
       }
@@ -2828,7 +2831,12 @@ const App: React.FC = () => {
 
       // Generate a new piece for the used slot immediately
       let newHand = [...hand];
-      newHand[selectedPieceIndex!] = generatePiece(newGrid, level);
+      const excludedShapeSignatures = new Set(
+        newHand
+          .filter((entry, index): entry is PieceData => Boolean(entry) && index !== selectedPieceIndex)
+          .map(entry => getPieceShapeSignature(entry))
+      );
+      newHand[selectedPieceIndex!] = generatePiece(newGrid, level, { excludedShapeSignatures });
       // Trigger fade-in for the new piece
       setFadingInPieceIndex(selectedPieceIndex);
       requestAnimationFrame(() => setFadingInPieceIndex(null));
