@@ -14,8 +14,15 @@ import { LayoutDebugPanel, LayoutDebugCopyStatus } from './LayoutDebugPanel';
 // Just check if the color value looks like an icon path (starts with '/icons/')
 const isIconPath = (color: string) => color.startsWith('/icons/');
 
-// How much the piece is lifted above the finger/cursor (8% of viewport height)
-const getDragOffsetY = () => Math.max(50, window.innerHeight * 0.08);
+// Lift dragged piece above the finger/cursor so it doesn't get occluded.
+const getDragOffsetY = () => {
+  const isCoarsePointer = typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia('(pointer: coarse)').matches;
+  return isCoarsePointer
+    ? Math.max(105, window.innerHeight * 0.16)
+    : Math.max(60, window.innerHeight * 0.1);
+};
 
 // Helper to get particle color from icon path
 const getParticleColor = (iconPath: string): string => {
