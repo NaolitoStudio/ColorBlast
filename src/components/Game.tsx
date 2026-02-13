@@ -53,17 +53,32 @@ const NINESLICE_SCALE_MULTIPLIER_STEP = 0.01;
 const BOARD_PADDING_MULTIPLIER_MIN = 0.5;
 const BOARD_PADDING_MULTIPLIER_MAX = 4;
 const BOARD_PADDING_MULTIPLIER_STEP = 0.01;
+const POWERUP_SIZE_MULTIPLIER_MIN = 0.5;
+const POWERUP_SIZE_MULTIPLIER_MAX = 2;
+const POWERUP_SIZE_MULTIPLIER_STEP = 0.01;
+const POWERUP_BUBBLE_SIZE_MULTIPLIER_MIN = 0.5;
+const POWERUP_BUBBLE_SIZE_MULTIPLIER_MAX = 2;
+const POWERUP_BUBBLE_SIZE_MULTIPLIER_STEP = 0.01;
+const POWERUP_GAP_MULTIPLIER_MIN = 0.5;
+const POWERUP_GAP_MULTIPLIER_MAX = 2;
+const POWERUP_GAP_MULTIPLIER_STEP = 0.01;
 
 type LayoutDebugOverrides = {
   spacerAspect: number;
   nineSliceScaleMultiplier: number;
   boardPaddingMultiplier: number;
+  powerupSizeMultiplier: number;
+  powerupBubbleSizeMultiplier: number;
+  powerupGapMultiplier: number;
 };
 
 const DEFAULT_LAYOUT_DEBUG_OVERRIDES: LayoutDebugOverrides = {
   spacerAspect: 75,
   nineSliceScaleMultiplier: 1,
   boardPaddingMultiplier: 0.7,
+  powerupSizeMultiplier: 1,
+  powerupBubbleSizeMultiplier: 1,
+  powerupGapMultiplier: 1,
 };
 
 const sanitizeLayoutAspect = (value: number): number => {
@@ -97,6 +112,33 @@ const sanitizeBoardPaddingMultiplier = (value: number): number => {
   return Math.round(clamped * 100) / 100;
 };
 
+const sanitizePowerupSizeMultiplier = (value: number): number => {
+  if (!Number.isFinite(value)) return DEFAULT_LAYOUT_DEBUG_OVERRIDES.powerupSizeMultiplier;
+  const clamped = Math.max(
+    POWERUP_SIZE_MULTIPLIER_MIN,
+    Math.min(POWERUP_SIZE_MULTIPLIER_MAX, value)
+  );
+  return Math.round(clamped * 100) / 100;
+};
+
+const sanitizePowerupBubbleSizeMultiplier = (value: number): number => {
+  if (!Number.isFinite(value)) return DEFAULT_LAYOUT_DEBUG_OVERRIDES.powerupBubbleSizeMultiplier;
+  const clamped = Math.max(
+    POWERUP_BUBBLE_SIZE_MULTIPLIER_MIN,
+    Math.min(POWERUP_BUBBLE_SIZE_MULTIPLIER_MAX, value)
+  );
+  return Math.round(clamped * 100) / 100;
+};
+
+const sanitizePowerupGapMultiplier = (value: number): number => {
+  if (!Number.isFinite(value)) return DEFAULT_LAYOUT_DEBUG_OVERRIDES.powerupGapMultiplier;
+  const clamped = Math.max(
+    POWERUP_GAP_MULTIPLIER_MIN,
+    Math.min(POWERUP_GAP_MULTIPLIER_MAX, value)
+  );
+  return Math.round(clamped * 100) / 100;
+};
+
 const sanitizeLayoutDebugOverrides = (
   value: Partial<LayoutDebugOverrides> | null | undefined
 ): LayoutDebugOverrides | null => {
@@ -104,6 +146,9 @@ const sanitizeLayoutDebugOverrides = (
   const spacerAspect = value.spacerAspect;
   const nineSliceScaleMultiplier = value.nineSliceScaleMultiplier;
   const boardPaddingMultiplier = value.boardPaddingMultiplier;
+  const powerupSizeMultiplier = value.powerupSizeMultiplier;
+  const powerupBubbleSizeMultiplier = value.powerupBubbleSizeMultiplier;
+  const powerupGapMultiplier = value.powerupGapMultiplier;
   if (typeof spacerAspect !== 'number' || typeof nineSliceScaleMultiplier !== 'number') return null;
   return {
     spacerAspect: sanitizeLayoutAspect(spacerAspect),
@@ -112,6 +157,21 @@ const sanitizeLayoutDebugOverrides = (
       typeof boardPaddingMultiplier === 'number'
         ? boardPaddingMultiplier
         : DEFAULT_LAYOUT_DEBUG_OVERRIDES.boardPaddingMultiplier
+    ),
+    powerupSizeMultiplier: sanitizePowerupSizeMultiplier(
+      typeof powerupSizeMultiplier === 'number'
+        ? powerupSizeMultiplier
+        : DEFAULT_LAYOUT_DEBUG_OVERRIDES.powerupSizeMultiplier
+    ),
+    powerupBubbleSizeMultiplier: sanitizePowerupBubbleSizeMultiplier(
+      typeof powerupBubbleSizeMultiplier === 'number'
+        ? powerupBubbleSizeMultiplier
+        : DEFAULT_LAYOUT_DEBUG_OVERRIDES.powerupBubbleSizeMultiplier
+    ),
+    powerupGapMultiplier: sanitizePowerupGapMultiplier(
+      typeof powerupGapMultiplier === 'number'
+        ? powerupGapMultiplier
+        : DEFAULT_LAYOUT_DEBUG_OVERRIDES.powerupGapMultiplier
     ),
   };
 };
@@ -801,16 +861,31 @@ export const Game: React.FC = () => {
 
   const appliedLayoutDebugOverrides = useMemo<LayoutDebugOverrides>(() => ({
     spacerAspect: sanitizeLayoutAspect(
-      layoutDebugOverrides?.spacerAspect ?? DEFAULT_LAYOUT_DEBUG_OVERRIDES.spacerAspect
+      layoutDebugOverrides?.spacerAspect ?? layoutThemeConfig.layoutDebugSpacerAspect
     ),
     nineSliceScaleMultiplier: sanitizeNineSliceScaleMultiplier(
-      layoutDebugOverrides?.nineSliceScaleMultiplier ?? DEFAULT_LAYOUT_DEBUG_OVERRIDES.nineSliceScaleMultiplier
+      layoutDebugOverrides?.nineSliceScaleMultiplier ?? layoutThemeConfig.layoutDebugNineSliceScaleMultiplier
     ),
     boardPaddingMultiplier: sanitizeBoardPaddingMultiplier(
-      layoutDebugOverrides?.boardPaddingMultiplier ?? DEFAULT_LAYOUT_DEBUG_OVERRIDES.boardPaddingMultiplier
+      layoutDebugOverrides?.boardPaddingMultiplier ?? layoutThemeConfig.layoutDebugBoardPaddingMultiplier
+    ),
+    powerupSizeMultiplier: sanitizePowerupSizeMultiplier(
+      layoutDebugOverrides?.powerupSizeMultiplier ?? layoutThemeConfig.layoutDebugPowerupSizeMultiplier
+    ),
+    powerupBubbleSizeMultiplier: sanitizePowerupBubbleSizeMultiplier(
+      layoutDebugOverrides?.powerupBubbleSizeMultiplier ?? layoutThemeConfig.layoutDebugPowerupBubbleSizeMultiplier
+    ),
+    powerupGapMultiplier: sanitizePowerupGapMultiplier(
+      layoutDebugOverrides?.powerupGapMultiplier ?? layoutThemeConfig.layoutDebugPowerupGapMultiplier
     ),
   }), [
     layoutDebugOverrides,
+    layoutThemeConfig.layoutDebugBoardPaddingMultiplier,
+    layoutThemeConfig.layoutDebugNineSliceScaleMultiplier,
+    layoutThemeConfig.layoutDebugPowerupBubbleSizeMultiplier,
+    layoutThemeConfig.layoutDebugPowerupGapMultiplier,
+    layoutThemeConfig.layoutDebugPowerupSizeMultiplier,
+    layoutThemeConfig.layoutDebugSpacerAspect,
   ]);
 
   const effectiveSpacerHeaderBoardAspect = useMemo(() => {
@@ -836,6 +911,9 @@ export const Game: React.FC = () => {
   ]);
 
   const nineSliceScaleMultiplier = appliedLayoutDebugOverrides.nineSliceScaleMultiplier;
+  const powerupSizeMultiplier = appliedLayoutDebugOverrides.powerupSizeMultiplier;
+  const powerupBubbleSizeMultiplier = appliedLayoutDebugOverrides.powerupBubbleSizeMultiplier;
+  const powerupGapMultiplier = appliedLayoutDebugOverrides.powerupGapMultiplier;
 
   const boardPanelConfig = useMemo(() => ({
     ...boardPanelThemeConfig,
@@ -3481,6 +3559,16 @@ export const Game: React.FC = () => {
   const objectiveBarWidth = Math.max(72, Math.min(headerPanelWidthPx * 0.26, uiUnit * 2.8));
   const objectiveRowGap = Math.max(8, uiUnit * 0.4);
   const objectiveGroupGap = Math.max(6, uiUnit * 0.24);
+  const powerupButtonCount = 4;
+  const effectivePowerupButtonSize = responsive.powerupButtonSize * powerupSizeMultiplier;
+  const effectivePowerupGap = responsive.powerupGap * powerupGapMultiplier;
+  const effectivePowerupRowWidth = (effectivePowerupButtonSize * powerupButtonCount)
+    + (effectivePowerupGap * Math.max(0, powerupButtonCount - 1));
+  const effectivePowerupIconSize = responsive.powerupIconSize * powerupSizeMultiplier;
+  const effectivePowerupBadgeSize = responsive.powerupBadgeSize * powerupBubbleSizeMultiplier;
+  const effectivePowerupBadgeFontSize = responsive.powerupBadgeFontSize * powerupBubbleSizeMultiplier;
+  const effectiveReservedBottomSpace = responsive.reservedBottomSpace
+    + Math.max(0, effectivePowerupButtonSize - responsive.powerupButtonSize);
   const objectiveTrackSource = gameState.objectives[1]?.color ?? gameState.objectives[0]?.color ?? '#3b82f6';
   const objectiveTrackColor = isIconPath(objectiveTrackSource)
     ? getParticleColor(objectiveTrackSource)
@@ -3510,7 +3598,12 @@ export const Game: React.FC = () => {
       rackWidthPercent: Number(responsive.rackWidthPercent.toFixed(2)),
       powerupButtonSize: Number(responsive.powerupButtonSize.toFixed(2)),
       powerupGap: Number(responsive.powerupGap.toFixed(2)),
+      effectivePowerupButtonSize: Number(effectivePowerupButtonSize.toFixed(2)),
+      effectivePowerupGap: Number(effectivePowerupGap.toFixed(2)),
+      effectivePowerupBadgeSize: Number(effectivePowerupBadgeSize.toFixed(2)),
+      effectivePowerupRowWidth: Number(effectivePowerupRowWidth.toFixed(2)),
       reservedBottomSpace: Number(responsive.reservedBottomSpace.toFixed(2)),
+      effectiveReservedBottomSpace: Number(effectiveReservedBottomSpace.toFixed(2)),
       viewportHeight: Number(responsive.viewportHeight.toFixed(2)),
       isViewportStable: responsive.isViewportStable,
     },
@@ -3533,6 +3626,11 @@ export const Game: React.FC = () => {
     responsive.rackWidthPercent,
     responsive.reservedBottomSpace,
     responsive.viewportHeight,
+    effectivePowerupBadgeSize,
+    effectivePowerupButtonSize,
+    effectivePowerupGap,
+    effectivePowerupRowWidth,
+    effectiveReservedBottomSpace,
     theme.themeName,
   ]);
   const layoutDebugText = useMemo(
@@ -4457,7 +4555,7 @@ export const Game: React.FC = () => {
       </div>
 
       {/* Reserve bottom space in normal flow so fixed powerups never overlap content */}
-      <div style={{ height: `${responsive.reservedBottomSpace}px`, flexShrink: 0 }} />
+      <div style={{ height: `${effectiveReservedBottomSpace}px`, flexShrink: 0 }} />
 
       {/* Powerup Buttons - Fixed at bottom */}
       <div
@@ -4465,8 +4563,8 @@ export const Game: React.FC = () => {
         style={{
           pointerEvents: isEndGameModalVisible ? 'none' : undefined,
           bottom: `${responsive.powerupBottomOffset}px`,
-          width: `${responsive.powerupRowWidth}px`,
-          gap: `${responsive.powerupGap}px`,
+          width: `${effectivePowerupRowWidth}px`,
+          gap: `${effectivePowerupGap}px`,
           paddingTop: `${responsive.powerupTopPadding}px`,
           paddingBottom: `${responsive.powerupBottomPadding}px`,
           opacity: responsive.isViewportStable ? 1 : 0.85
@@ -4481,18 +4579,18 @@ export const Game: React.FC = () => {
             transition-all duration-200 active:scale-95
             ${deleteBlockUses > 0 && !deleteBlockMode && !wildcardMode ? 'bg-gradient-to-br from-cyan-500 to-blue-600 shadow-lg shadow-cyan-500/30' : 'bg-slate-700 opacity-50'}
           `}
-          style={{ width: `${responsive.powerupButtonSize}px`, height: `${responsive.powerupButtonSize}px` }}
+          style={{ width: `${effectivePowerupButtonSize}px`, height: `${effectivePowerupButtonSize}px` }}
         >
-          <i className="fa-solid fa-crosshairs text-white" style={{ fontSize: `${responsive.powerupIconSize}px` }}></i>
+          <i className="fa-solid fa-crosshairs text-white" style={{ fontSize: `${effectivePowerupIconSize}px` }}></i>
           {deleteBlockUses > 0 && (
             <div
               className="absolute bg-yellow-400 rounded-full flex items-center justify-center font-bold text-black"
               style={{
-                width: `${responsive.powerupBadgeSize}px`,
-                height: `${responsive.powerupBadgeSize}px`,
-                top: `${-responsive.powerupBadgeSize * 0.22}px`,
-                right: `${-responsive.powerupBadgeSize * 0.22}px`,
-                fontSize: `${responsive.powerupBadgeFontSize}px`
+                width: `${effectivePowerupBadgeSize}px`,
+                height: `${effectivePowerupBadgeSize}px`,
+                top: `${-effectivePowerupBadgeSize * 0.22}px`,
+                right: `${-effectivePowerupBadgeSize * 0.22}px`,
+                fontSize: `${effectivePowerupBadgeFontSize}px`
               }}
             >
               {deleteBlockUses}
@@ -4509,18 +4607,18 @@ export const Game: React.FC = () => {
             transition-all duration-200 active:scale-95
             ${wildcardUses > 0 && !wildcardMode && !deleteBlockMode ? 'bg-gradient-to-br from-yellow-500 to-amber-600 shadow-lg shadow-yellow-500/30' : 'bg-slate-700 opacity-50'}
           `}
-          style={{ width: `${responsive.powerupButtonSize}px`, height: `${responsive.powerupButtonSize}px` }}
+          style={{ width: `${effectivePowerupButtonSize}px`, height: `${effectivePowerupButtonSize}px` }}
         >
-          <i className="fa-solid fa-wand-magic-sparkles text-white" style={{ fontSize: `${responsive.powerupIconSize}px` }}></i>
+          <i className="fa-solid fa-wand-magic-sparkles text-white" style={{ fontSize: `${effectivePowerupIconSize}px` }}></i>
           {wildcardUses > 0 && (
             <div
               className="absolute bg-yellow-400 rounded-full flex items-center justify-center font-bold text-black"
               style={{
-                width: `${responsive.powerupBadgeSize}px`,
-                height: `${responsive.powerupBadgeSize}px`,
-                top: `${-responsive.powerupBadgeSize * 0.22}px`,
-                right: `${-responsive.powerupBadgeSize * 0.22}px`,
-                fontSize: `${responsive.powerupBadgeFontSize}px`
+                width: `${effectivePowerupBadgeSize}px`,
+                height: `${effectivePowerupBadgeSize}px`,
+                top: `${-effectivePowerupBadgeSize * 0.22}px`,
+                right: `${-effectivePowerupBadgeSize * 0.22}px`,
+                fontSize: `${effectivePowerupBadgeFontSize}px`
               }}
             >
               {wildcardUses}
@@ -4537,18 +4635,18 @@ export const Game: React.FC = () => {
             transition-all duration-200 active:scale-95
             ${shuffleUses > 0 && !shufflePhase && !deleteBlockMode && !wildcardMode ? 'bg-gradient-to-br from-purple-500 to-indigo-600 shadow-lg shadow-purple-500/30' : 'bg-slate-700 opacity-50'}
           `}
-          style={{ width: `${responsive.powerupButtonSize}px`, height: `${responsive.powerupButtonSize}px` }}
+          style={{ width: `${effectivePowerupButtonSize}px`, height: `${effectivePowerupButtonSize}px` }}
         >
-          <i className="fa-solid fa-shuffle text-white" style={{ fontSize: `${responsive.powerupIconSize}px` }}></i>
+          <i className="fa-solid fa-shuffle text-white" style={{ fontSize: `${effectivePowerupIconSize}px` }}></i>
           {shuffleUses > 0 && (
             <div
               className="absolute bg-yellow-400 rounded-full flex items-center justify-center font-bold text-black"
               style={{
-                width: `${responsive.powerupBadgeSize}px`,
-                height: `${responsive.powerupBadgeSize}px`,
-                top: `${-responsive.powerupBadgeSize * 0.22}px`,
-                right: `${-responsive.powerupBadgeSize * 0.22}px`,
-                fontSize: `${responsive.powerupBadgeFontSize}px`
+                width: `${effectivePowerupBadgeSize}px`,
+                height: `${effectivePowerupBadgeSize}px`,
+                top: `${-effectivePowerupBadgeSize * 0.22}px`,
+                right: `${-effectivePowerupBadgeSize * 0.22}px`,
+                fontSize: `${effectivePowerupBadgeFontSize}px`
               }}
             >
               {shuffleUses}
@@ -4565,18 +4663,18 @@ export const Game: React.FC = () => {
             transition-all duration-200 active:scale-95
             ${trashUses > 0 && !trashingAllPieces && !deleteBlockMode && !wildcardMode ? 'bg-gradient-to-br from-red-500 to-orange-600 shadow-lg shadow-red-500/30' : 'bg-slate-700 opacity-50'}
           `}
-          style={{ width: `${responsive.powerupButtonSize}px`, height: `${responsive.powerupButtonSize}px` }}
+          style={{ width: `${effectivePowerupButtonSize}px`, height: `${effectivePowerupButtonSize}px` }}
         >
-          <i className="fa-solid fa-rotate text-white" style={{ fontSize: `${responsive.powerupIconSize}px` }}></i>
+          <i className="fa-solid fa-rotate text-white" style={{ fontSize: `${effectivePowerupIconSize}px` }}></i>
           {trashUses > 0 && (
             <div
               className="absolute bg-yellow-400 rounded-full flex items-center justify-center font-bold text-black"
               style={{
-                width: `${responsive.powerupBadgeSize}px`,
-                height: `${responsive.powerupBadgeSize}px`,
-                top: `${-responsive.powerupBadgeSize * 0.22}px`,
-                right: `${-responsive.powerupBadgeSize * 0.22}px`,
-                fontSize: `${responsive.powerupBadgeFontSize}px`
+                width: `${effectivePowerupBadgeSize}px`,
+                height: `${effectivePowerupBadgeSize}px`,
+                top: `${-effectivePowerupBadgeSize * 0.22}px`,
+                right: `${-effectivePowerupBadgeSize * 0.22}px`,
+                fontSize: `${effectivePowerupBadgeFontSize}px`
               }}
             >
               {trashUses}
@@ -4789,11 +4887,26 @@ export const Game: React.FC = () => {
         maxPaddingMultiplier={BOARD_PADDING_MULTIPLIER_MAX}
         paddingMultiplierStep={BOARD_PADDING_MULTIPLIER_STEP}
         boardPaddingMultiplier={appliedLayoutDebugOverrides.boardPaddingMultiplier}
+        minPowerupSizeMultiplier={POWERUP_SIZE_MULTIPLIER_MIN}
+        maxPowerupSizeMultiplier={POWERUP_SIZE_MULTIPLIER_MAX}
+        powerupSizeMultiplierStep={POWERUP_SIZE_MULTIPLIER_STEP}
+        powerupSizeMultiplier={appliedLayoutDebugOverrides.powerupSizeMultiplier}
+        minPowerupBubbleSizeMultiplier={POWERUP_BUBBLE_SIZE_MULTIPLIER_MIN}
+        maxPowerupBubbleSizeMultiplier={POWERUP_BUBBLE_SIZE_MULTIPLIER_MAX}
+        powerupBubbleSizeMultiplierStep={POWERUP_BUBBLE_SIZE_MULTIPLIER_STEP}
+        powerupBubbleSizeMultiplier={appliedLayoutDebugOverrides.powerupBubbleSizeMultiplier}
+        minPowerupGapMultiplier={POWERUP_GAP_MULTIPLIER_MIN}
+        maxPowerupGapMultiplier={POWERUP_GAP_MULTIPLIER_MAX}
+        powerupGapMultiplierStep={POWERUP_GAP_MULTIPLIER_STEP}
+        powerupGapMultiplier={appliedLayoutDebugOverrides.powerupGapMultiplier}
         copyStatus={layoutDebugCopyStatus}
         debugText={layoutDebugText}
         onChangeSpacerAspect={(value) => updateLayoutDebugOverride({ spacerAspect: value })}
         onChangeNineSliceScaleMultiplier={(value) => updateLayoutDebugOverride({ nineSliceScaleMultiplier: value })}
         onChangeBoardPaddingMultiplier={(value) => updateLayoutDebugOverride({ boardPaddingMultiplier: value })}
+        onChangePowerupSizeMultiplier={(value) => updateLayoutDebugOverride({ powerupSizeMultiplier: value })}
+        onChangePowerupBubbleSizeMultiplier={(value) => updateLayoutDebugOverride({ powerupBubbleSizeMultiplier: value })}
+        onChangePowerupGapMultiplier={(value) => updateLayoutDebugOverride({ powerupGapMultiplier: value })}
         onCopy={handleCopyLayoutDebug}
         onReset={handleResetLayoutDebug}
         onHide={() => setIsLayoutDebugVisible(false)}

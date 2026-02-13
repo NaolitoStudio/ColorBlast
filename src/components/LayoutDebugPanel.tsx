@@ -15,11 +15,26 @@ type LayoutDebugPanelProps = {
   maxPaddingMultiplier?: number;
   paddingMultiplierStep?: number;
   boardPaddingMultiplier: number;
+  minPowerupSizeMultiplier?: number;
+  maxPowerupSizeMultiplier?: number;
+  powerupSizeMultiplierStep?: number;
+  powerupSizeMultiplier: number;
+  minPowerupBubbleSizeMultiplier?: number;
+  maxPowerupBubbleSizeMultiplier?: number;
+  powerupBubbleSizeMultiplierStep?: number;
+  powerupBubbleSizeMultiplier: number;
+  minPowerupGapMultiplier?: number;
+  maxPowerupGapMultiplier?: number;
+  powerupGapMultiplierStep?: number;
+  powerupGapMultiplier: number;
   copyStatus: LayoutDebugCopyStatus;
   debugText: string;
   onChangeSpacerAspect: (value: number) => void;
   onChangeNineSliceScaleMultiplier: (value: number) => void;
   onChangeBoardPaddingMultiplier: (value: number) => void;
+  onChangePowerupSizeMultiplier: (value: number) => void;
+  onChangePowerupBubbleSizeMultiplier: (value: number) => void;
+  onChangePowerupGapMultiplier: (value: number) => void;
   onCopy: () => void;
   onReset: () => void;
   onHide: () => void;
@@ -38,11 +53,26 @@ export const LayoutDebugPanel: React.FC<LayoutDebugPanelProps> = ({
   maxPaddingMultiplier = 4,
   paddingMultiplierStep = 0.01,
   boardPaddingMultiplier,
+  minPowerupSizeMultiplier = 0.5,
+  maxPowerupSizeMultiplier = 2,
+  powerupSizeMultiplierStep = 0.01,
+  powerupSizeMultiplier,
+  minPowerupBubbleSizeMultiplier = 0.5,
+  maxPowerupBubbleSizeMultiplier = 2,
+  powerupBubbleSizeMultiplierStep = 0.01,
+  powerupBubbleSizeMultiplier,
+  minPowerupGapMultiplier = 0.5,
+  maxPowerupGapMultiplier = 2,
+  powerupGapMultiplierStep = 0.01,
+  powerupGapMultiplier,
   copyStatus,
   debugText,
   onChangeSpacerAspect,
   onChangeNineSliceScaleMultiplier,
   onChangeBoardPaddingMultiplier,
+  onChangePowerupSizeMultiplier,
+  onChangePowerupBubbleSizeMultiplier,
+  onChangePowerupGapMultiplier,
   onCopy,
   onReset,
   onHide,
@@ -140,6 +170,91 @@ export const LayoutDebugPanel: React.FC<LayoutDebugPanelProps> = ({
             />
           </div>
         </div>
+
+        <details className="rounded-md border border-slate-700 bg-slate-900/40">
+          <summary className="cursor-pointer select-none px-2 py-1.5 text-[11px] font-semibold text-slate-200">
+            Powerups
+          </summary>
+          <div className="space-y-2 px-2 pb-2 pt-1">
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold text-slate-300">
+                Powerup Size Multiplier
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min={minPowerupSizeMultiplier}
+                  max={maxPowerupSizeMultiplier}
+                  step={powerupSizeMultiplierStep}
+                  value={powerupSizeMultiplier}
+                  onChange={(event) => onChangePowerupSizeMultiplier(Number(event.target.value))}
+                  className="w-full"
+                />
+                <input
+                  type="number"
+                  min={minPowerupSizeMultiplier}
+                  max={maxPowerupSizeMultiplier}
+                  step={powerupSizeMultiplierStep}
+                  value={powerupSizeMultiplier}
+                  onChange={(event) => onChangePowerupSizeMultiplier(Number(event.target.value))}
+                  className="w-16 rounded-md border border-slate-500 bg-slate-900 px-1.5 py-1 text-right text-xs"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold text-slate-300">
+                Bubble Size Multiplier
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min={minPowerupBubbleSizeMultiplier}
+                  max={maxPowerupBubbleSizeMultiplier}
+                  step={powerupBubbleSizeMultiplierStep}
+                  value={powerupBubbleSizeMultiplier}
+                  onChange={(event) => onChangePowerupBubbleSizeMultiplier(Number(event.target.value))}
+                  className="w-full"
+                />
+                <input
+                  type="number"
+                  min={minPowerupBubbleSizeMultiplier}
+                  max={maxPowerupBubbleSizeMultiplier}
+                  step={powerupBubbleSizeMultiplierStep}
+                  value={powerupBubbleSizeMultiplier}
+                  onChange={(event) => onChangePowerupBubbleSizeMultiplier(Number(event.target.value))}
+                  className="w-16 rounded-md border border-slate-500 bg-slate-900 px-1.5 py-1 text-right text-xs"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold text-slate-300">
+                Powerup Horizontal Gap Multiplier
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min={minPowerupGapMultiplier}
+                  max={maxPowerupGapMultiplier}
+                  step={powerupGapMultiplierStep}
+                  value={powerupGapMultiplier}
+                  onChange={(event) => onChangePowerupGapMultiplier(Number(event.target.value))}
+                  className="w-full"
+                />
+                <input
+                  type="number"
+                  min={minPowerupGapMultiplier}
+                  max={maxPowerupGapMultiplier}
+                  step={powerupGapMultiplierStep}
+                  value={powerupGapMultiplier}
+                  onChange={(event) => onChangePowerupGapMultiplier(Number(event.target.value))}
+                  className="w-16 rounded-md border border-slate-500 bg-slate-900 px-1.5 py-1 text-right text-xs"
+                />
+              </div>
+            </div>
+          </div>
+        </details>
       </div>
 
       <div className="mb-2 flex items-center gap-2">

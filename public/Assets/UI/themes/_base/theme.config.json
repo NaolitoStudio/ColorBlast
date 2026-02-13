@@ -15,7 +15,13 @@
   "layout": {
     "_description": "Layout responsivo global del juego",
     "spacerHeaderBoardAspect": 28,
-    "spacerBoardRackAspect": 24
+    "spacerBoardRackAspect": 24,
+    "layoutDebugSpacerAspect": 75,
+    "layoutDebugNineSliceScaleMultiplier": 1,
+    "layoutDebugBoardPaddingMultiplier": 0.7,
+    "layoutDebugPowerupSizeMultiplier": 1,
+    "layoutDebugPowerupBubbleSizeMultiplier": 1,
+    "layoutDebugPowerupGapMultiplier": 1
   },
 
   "panels": {

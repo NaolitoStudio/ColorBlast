@@ -47,6 +47,18 @@ export interface ThemeLayoutConfig {
   spacerHeaderBoardAspect?: number;
   /** Aspect ratio del espaciador entre board y rack (más alto = menos espacio) */
   spacerBoardRackAspect?: number;
+  /** Valor por defecto del slider Spacer Separation del layout debug */
+  layoutDebugSpacerAspect?: number;
+  /** Valor por defecto del slider NineSlice Scale Multiplier del layout debug */
+  layoutDebugNineSliceScaleMultiplier?: number;
+  /** Valor por defecto del slider Board Padding Multiplier del layout debug */
+  layoutDebugBoardPaddingMultiplier?: number;
+  /** Valor por defecto del slider Powerup Size Multiplier del layout debug */
+  layoutDebugPowerupSizeMultiplier?: number;
+  /** Valor por defecto del slider Bubble Size Multiplier del layout debug */
+  layoutDebugPowerupBubbleSizeMultiplier?: number;
+  /** Valor por defecto del slider Powerup Horizontal Gap Multiplier del layout debug */
+  layoutDebugPowerupGapMultiplier?: number;
 }
 
 /**
@@ -74,6 +86,12 @@ export const DEFAULT_NINESLICE_CONFIG: Required<Omit<NineSliceConfig, 'aspectRat
 export const DEFAULT_THEME_LAYOUT_CONFIG: Required<ThemeLayoutConfig> = {
   spacerHeaderBoardAspect: 28,
   spacerBoardRackAspect: 24,
+  layoutDebugSpacerAspect: 75,
+  layoutDebugNineSliceScaleMultiplier: 1,
+  layoutDebugBoardPaddingMultiplier: 0.7,
+  layoutDebugPowerupSizeMultiplier: 1,
+  layoutDebugPowerupBubbleSizeMultiplier: 1,
+  layoutDebugPowerupGapMultiplier: 1,
 };
 
 /**
