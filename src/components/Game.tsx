@@ -776,10 +776,17 @@ export const Game: React.FC = () => {
     blocks: AddedBlock[];
     boosters: Booster[];
     minLoadingMs: number;
+    showLoadingOverlay: boolean;
   } | null>(null);
   const introRequestIdRef = useRef(0);
   const bootIntroQueuedRef = useRef(false);
   const pendingIncomingBlocksRef = useRef<AddedBlock[] | null>(null);
+  const pendingAllClearIntroRef = useRef<{
+    grid: GameState['grid'];
+    boosters: Booster[];
+    minLoadingMs: number;
+    showLoadingOverlay: boolean;
+  } | null>(null);
 
   const layoutRef = useRef<HTMLDivElement>(null);
   const headerCardRef = useRef<HTMLDivElement>(null);
@@ -926,16 +933,24 @@ export const Game: React.FC = () => {
   const queueLevelIntro = useCallback((
     grid: GameState['grid'],
     boosters: Booster[] = [],
-    minLoadingMs = 650
+    minLoadingMs = 650,
+    options?: {
+      showLoadingOverlay?: boolean;
+    }
   ) => {
+    const showLoadingOverlay = options?.showLoadingOverlay ?? true;
     const requestId = ++introRequestIdRef.current;
-    setShowLoadingScreen(true);
+    setShowLoadingScreen(showLoadingOverlay);
     setIsInteractionLocked(true);
+    // If no loading overlay is shown, keep board slots visible (hide static tiles)
+    // until incoming animation starts.
+    setIsIntroArrivalActive(!showLoadingOverlay);
     setIntroRequest({
       id: requestId,
       blocks: collectGridBlocksForIntro(grid, boosters),
       boosters: boosters.map(booster => ({ ...booster })),
-      minLoadingMs
+      minLoadingMs,
+      showLoadingOverlay
     });
   }, []);
 
@@ -943,6 +958,7 @@ export const Game: React.FC = () => {
     bootIntroQueuedRef.current = false;
     introRequestIdRef.current = 0;
     pendingIncomingBlocksRef.current = null;
+    pendingAllClearIntroRef.current = null;
     setIsInteractionLocked(true);
     setShowLoadingScreen(true);
     setIsIntroArrivalActive(false);
@@ -1308,6 +1324,12 @@ export const Game: React.FC = () => {
         const levelConfig = getLevelConfig(prev.level);
         const newGrid = createRandomGrid(levelConfig.gridFill, prev.level);
         const newHand = generateValidHand(newGrid, prev.level);
+        pendingAllClearIntroRef.current = {
+          grid: newGrid,
+          boosters: [],
+          minLoadingMs: 50,
+          showLoadingOverlay: false
+        };
 
         return {
           ...prev,
@@ -2394,6 +2416,16 @@ export const Game: React.FC = () => {
     pendingIncomingBlocksRef.current = null;
     triggerIncomingBlockAnimation(pending);
   }, [gameState.grid, triggerIncomingBlockAnimation]);
+
+  // Run queued ALL CLEAR intro right after grid commit and before paint.
+  useLayoutEffect(() => {
+    const pending = pendingAllClearIntroRef.current;
+    if (!pending) return;
+    pendingAllClearIntroRef.current = null;
+    queueLevelIntro(pending.grid, pending.boosters, pending.minLoadingMs, {
+      showLoadingOverlay: pending.showLoadingOverlay
+    });
+  }, [gameState.grid, queueLevelIntro]);
 
   const waitForBoardGridReady = useCallback(async (maxFrames = 24): Promise<void> => {
     for (let frame = 0; frame < maxFrames; frame++) {
