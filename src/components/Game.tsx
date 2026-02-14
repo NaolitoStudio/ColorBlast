@@ -1067,6 +1067,13 @@ const createLevelOneTestBoosters = (): Booster[] => ([
   { id: 'test-superball-right', type: 'color_ball', x: 4, y: 3, color: Color.ORANGE }
 ]);
 
+type ContinueOfferReason = 'out_of_moves' | 'no_valid_moves';
+
+const START_LEVEL = 50;
+const getStartBoostersForLevel = (level: number): Booster[] => (
+  level === 1 ? createLevelOneTestBoosters() : []
+);
+
 export const Game: React.FC = () => {
   // Audio system
   const audio = useAudio();
@@ -1080,9 +1087,9 @@ export const Game: React.FC = () => {
   const particleIdCounter = useRef(0);
 
   const [gameState, setGameState] = useState<GameState>(() => {
-    const initialLevel = 1;
+    const initialLevel = START_LEVEL;
     const levelConfig = getLevelConfig(initialLevel);
-    const initialBoosters = createLevelOneTestBoosters();
+    const initialBoosters = getStartBoostersForLevel(initialLevel);
     const baseInitialGrid = removeTilesAtPoints(
       createRandomGrid(levelConfig.gridFill, initialLevel),
       initialBoosters.map(booster => ({ x: booster.x, y: booster.y }))
@@ -1138,6 +1145,7 @@ export const Game: React.FC = () => {
   const [watchingAd, setWatchingAd] = useState(false);
   const [showOutOfMovesPopup, setShowOutOfMovesPopup] = useState(false);
   const [watchingMovesAd, setWatchingMovesAd] = useState(false);
+  const [continueOfferReason, setContinueOfferReason] = useState<ContinueOfferReason>('out_of_moves');
   const [trashingAllPieces, setTrashingAllPieces] = useState(false);
   const [superballAnimations, setSuperballAnimations] = useState<SuperballAnimationState[]>([]);
   const [destructionRuntime, setDestructionRuntime] = useState<DestructionRuntimeState>(() => (
@@ -1184,6 +1192,8 @@ export const Game: React.FC = () => {
   const introRequestIdRef = useRef(0);
   const bootIntroQueuedRef = useRef(false);
   const pendingIncomingBlocksRef = useRef<AddedBlock[] | null>(null);
+  const pendingIncomingBoostersRef = useRef<Booster[] | null>(null);
+  const hiddenIncomingBoosterIdsRef = useRef<Set<string>>(new Set());
   const pendingAllClearIntroRef = useRef<{
     grid: GameState['grid'];
     boosters: Booster[];
@@ -1414,7 +1424,9 @@ export const Game: React.FC = () => {
     bootIntroQueuedRef.current = false;
     introRequestIdRef.current = 0;
     pendingIncomingBlocksRef.current = null;
+    pendingIncomingBoostersRef.current = null;
     pendingAllClearIntroRef.current = null;
+    hiddenIncomingBoosterIdsRef.current = new Set();
     setIsInteractionLocked(true);
     setShowLoadingScreen(true);
     setIsIntroArrivalActive(false);
@@ -1462,7 +1474,6 @@ export const Game: React.FC = () => {
     }
     return { tileIds, boosterIds };
   }, [shuffleAnimations]);
-
 
   // Preload all critical assets before exposing gameplay.
   useEffect(() => {
@@ -1711,13 +1722,131 @@ export const Game: React.FC = () => {
     return true; // No tiles but boosters exist
   };
 
-  const shouldTriggerNoValidMovesGameOver = (
+  const hasNoValidMovesWithoutBoosters = (
     grid: GameState['grid'],
     hand: GameState['hand'],
     boosters: Booster[]
   ): boolean => {
     if (boosters.length > 0) return false;
     return isGameOver(grid, hand, boosters);
+  };
+
+  const openContinueOffer = useCallback((reason: ContinueOfferReason, delayMs = 0) => {
+    const show = () => {
+      setContinueOfferReason(reason);
+      setShowOutOfMovesPopup(true);
+    };
+
+    if (delayMs <= 0) {
+      show();
+      return;
+    }
+
+    window.setTimeout(show, delayMs);
+  }, []);
+
+  const getContinueSuperballSpawnPoint = (
+    grid: GameState['grid'],
+    boosters: Booster[]
+  ): { point: Point; clearsTile: boolean } | null => {
+    const center = (GRID_SIZE - 1) / 2;
+    const boosterSet = new Set(boosters.map((booster) => `${booster.x},${booster.y}`));
+    const emptyCells: Point[] = [];
+    const occupiedCells: Point[] = [];
+
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        if (boosterSet.has(`${x},${y}`)) continue;
+        if (grid[y][x] === null) {
+          emptyCells.push({ x, y });
+        } else {
+          occupiedCells.push({ x, y });
+        }
+      }
+    }
+
+    const byCenter = (a: Point, b: Point) => {
+      const da = Math.abs(a.x - center) + Math.abs(a.y - center);
+      const db = Math.abs(b.x - center) + Math.abs(b.y - center);
+      return da - db;
+    };
+
+    emptyCells.sort(byCenter);
+    occupiedCells.sort(byCenter);
+
+    if (emptyCells.length > 0) {
+      return { point: emptyCells[0], clearsTile: false };
+    }
+    if (occupiedCells.length > 0) {
+      return { point: occupiedCells[0], clearsTile: true };
+    }
+
+    return null;
+  };
+
+  const getPreferredContinueSuperballColor = (grid: GameState['grid'], level: number): Color => {
+    const counts = new Map<Color, number>();
+
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        const tile = grid[y][x];
+        if (!tile) continue;
+        counts.set(tile.color, (counts.get(tile.color) ?? 0) + 1);
+      }
+    }
+
+    let bestColor: Color | null = null;
+    let bestCount = -1;
+    counts.forEach((count, color) => {
+      if (count > bestCount) {
+        bestCount = count;
+        bestColor = color;
+      }
+    });
+
+    if (bestColor) return bestColor;
+    const levelColors = getColorsForLevel(level);
+    return levelColors[0] ?? Color.BLUE;
+  };
+
+  const applyNoValidMovesContinue = (prev: GameState): GameState => {
+    const spawnTarget = getContinueSuperballSpawnPoint(prev.grid, prev.boosters);
+    if (!spawnTarget) {
+      return {
+        ...prev,
+        gameOver: false,
+        selectedPieceIndex: null
+      };
+    }
+
+    const { point, clearsTile } = spawnTarget;
+    const nextGrid = prev.grid.map((row) => [...row]);
+    if (clearsTile) {
+      nextGrid[point.y][point.x] = null;
+    }
+
+    const continueBooster: Booster = {
+      id: `continue-superball-${Date.now()}-${Math.random()}`,
+      type: 'color_ball',
+      x: point.x,
+      y: point.y,
+      color: getPreferredContinueSuperballColor(nextGrid, prev.level)
+    };
+    const nextBoosters = [...prev.boosters, continueBooster];
+    pendingAllClearIntroRef.current = {
+      grid: nextGrid,
+      boosters: nextBoosters,
+      minLoadingMs: 50,
+      showLoadingOverlay: false
+    };
+
+    return {
+      ...prev,
+      grid: nextGrid,
+      boosters: nextBoosters,
+      gameOver: false,
+      selectedPieceIndex: null
+    };
   };
 
   // Handle case when only boosters remain using the same ALL CLEAR cadence:
@@ -2004,11 +2133,7 @@ export const Game: React.FC = () => {
           } else {
             pendingAllClearAfterDestructionRef.current = false;
             pendingOnlyBoostersAfterDestructionRef.current = false;
-            nextState.gameOver = shouldTriggerNoValidMovesGameOver(
-              nextState.grid,
-              nextState.hand,
-              nextState.boosters
-            );
+            nextState.gameOver = false;
           }
         } else {
           pendingAllClearAfterDestructionRef.current = false;
@@ -2247,11 +2372,7 @@ export const Game: React.FC = () => {
         } else {
           pendingAllClearAfterDestructionRef.current = false;
           pendingOnlyBoostersAfterDestructionRef.current = false;
-          nextState.gameOver = shouldTriggerNoValidMovesGameOver(
-            nextState.grid,
-            nextState.hand,
-            nextState.boosters
-          );
+          nextState.gameOver = false;
         }
       } else {
         pendingAllClearAfterDestructionRef.current = false;
@@ -2496,9 +2617,9 @@ export const Game: React.FC = () => {
   };
 
   const handleRestart = () => {
-    const initialLevel = 1;
+    const initialLevel = START_LEVEL;
     const levelConfig = getLevelConfig(initialLevel);
-    const initialBoosters = createLevelOneTestBoosters();
+    const initialBoosters = getStartBoostersForLevel(initialLevel);
     const baseInitialGrid = removeTilesAtPoints(
       createRandomGrid(levelConfig.gridFill, initialLevel),
       initialBoosters.map(booster => ({ x: booster.x, y: booster.y }))
@@ -2873,12 +2994,17 @@ export const Game: React.FC = () => {
     setShowAdPopup(false);
   };
 
-  // Handle out of moves popup
+  // Handle continue popup (out-of-moves / no-valid-moves)
   const handleWatchMovesAd = () => {
     setWatchingMovesAd(true);
     // Simulate watching an ad
     setTimeout(() => {
-      setGameState(prev => ({ ...prev, moves: 5 })); // Give 5 more moves
+      if (continueOfferReason === 'no_valid_moves') {
+        setGameState(prev => applyNoValidMovesContinue(prev));
+        audio.play('createBooster');
+      } else {
+        setGameState(prev => ({ ...prev, moves: 5, gameOver: false })); // Give 5 more moves
+      }
       setShowOutOfMovesPopup(false);
       setWatchingMovesAd(false);
     }, 1500);
@@ -3052,13 +3178,35 @@ export const Game: React.FC = () => {
   }, [playAudio]);
 
   // Run queued spawn animations right after grid commit, before paint.
-  // This prevents a frame where spawned tiles appear statically first.
+  // This prevents a frame where spawned tiles/boosters appear statically first.
   useLayoutEffect(() => {
-    const pending = pendingIncomingBlocksRef.current;
-    if (!pending || pending.length === 0) return;
+    const pendingBlocks = pendingIncomingBlocksRef.current ?? [];
+    const pendingBoosters = pendingIncomingBoostersRef.current ?? [];
+    if (pendingBlocks.length === 0 && pendingBoosters.length === 0) return;
+    const boosterIdsToHide = pendingBoosters.map((booster) => booster.id);
+    if (boosterIdsToHide.length > 0) {
+      setIncomingBoosterSpawnIds((prev) => {
+        const next = new Set(prev);
+        boosterIdsToHide.forEach((id) => next.add(id));
+        return next;
+      });
+    }
     pendingIncomingBlocksRef.current = null;
-    triggerIncomingBlockAnimation(pending);
-  }, [gameState.grid, triggerIncomingBlockAnimation]);
+    pendingIncomingBoostersRef.current = null;
+    triggerIncomingBlockAnimation(pendingBlocks, {
+      incomingBoosters: pendingBoosters,
+      onComplete: boosterIdsToHide.length > 0
+        ? () => {
+            setIncomingBoosterSpawnIds((prev) => {
+              if (prev.size === 0) return prev;
+              const next = new Set(prev);
+              boosterIdsToHide.forEach((id) => next.delete(id));
+              return next;
+            });
+          }
+        : undefined
+    });
+  }, [gameState.boosters, gameState.grid, triggerIncomingBlockAnimation]);
 
   // Run queued ALL CLEAR intro right after grid commit and before paint.
   useLayoutEffect(() => {
@@ -3555,12 +3703,7 @@ export const Game: React.FC = () => {
           return { ...prev, grid: finalGrid, clearingTiles: [] };
         }
 
-        const lost = !prev.levelComplete && shouldTriggerNoValidMovesGameOver(
-          finalGrid,
-          prev.hand,
-          prev.boosters
-        );
-        return { ...prev, grid: finalGrid, clearingTiles: [], gameOver: lost };
+        return { ...prev, grid: finalGrid, clearingTiles: [], gameOver: false };
       });
     }, 400);
   };
@@ -3600,27 +3743,29 @@ export const Game: React.FC = () => {
     superballAnimation
   ]);
 
-  // Keep game-over state in sync with the real board/hand state.
-  // This prevents stale states where no piece fits but game-over is not shown
-  // until the next user interaction.
+  // Offer continue when there are no valid moves left (and no boosters available),
+  // instead of forcing immediate game over.
   useEffect(() => {
     if (isGameplayInputLocked || showLoadingScreen || isIntroArrivalActive || introRequest) return;
     if (gameState.gameOver || gameState.levelComplete) return;
     if (gameState.clearingTiles.length > 0) return;
     if (shuffleAnimations.length > 0 || shufflePhase || superballAnimation) return;
     if (celebrating || showLevelPopup || showAllClear || showOutOfMovesPopup) return;
+    if (gameState.moves <= 0) return;
 
-    const noValidPlacements = shouldTriggerNoValidMovesGameOver(
+    const noValidPlacements = hasNoValidMovesWithoutBoosters(
       gameState.grid,
       gameState.hand,
       gameState.boosters
     );
     if (!noValidPlacements) return;
 
+    setContinueOfferReason('no_valid_moves');
+    setShowOutOfMovesPopup(true);
     setGameState(prev => (
-      prev.gameOver || prev.levelComplete
+      prev.selectedPieceIndex === null
         ? prev
-        : { ...prev, gameOver: true }
+        : { ...prev, selectedPieceIndex: null }
     ));
   }, [
     celebrating,
@@ -3630,6 +3775,7 @@ export const Game: React.FC = () => {
     gameState.grid,
     gameState.hand,
     gameState.levelComplete,
+    gameState.moves,
     introRequest,
     isGameplayInputLocked,
     isIntroArrivalActive,
@@ -3900,7 +4046,7 @@ export const Game: React.FC = () => {
 
         // Show popup if out of moves
         if (outOfMoves) {
-          setTimeout(() => setShowOutOfMovesPopup(true), 500);
+          openContinueOffer('out_of_moves', 500);
         }
 
         setTimeout(() => {
@@ -3986,16 +4132,11 @@ export const Game: React.FC = () => {
               return { ...prev, grid: finalGrid, clearingTiles: [] };
             }
 
-            const lost = !prev.levelComplete && shouldTriggerNoValidMovesGameOver(
-              finalGrid,
-              prev.hand,
-              prev.boosters
-            );
             return {
               ...prev,
               grid: finalGrid,
               clearingTiles: [],
-              gameOver: lost
+              gameOver: false
             };
           });
         }, 400);
@@ -4023,12 +4164,6 @@ export const Game: React.FC = () => {
           pendingIncomingBlocksRef.current = result.addedBlocks;
         }
 
-        const noValidMoves = shouldTriggerNoValidMovesGameOver(
-          gridWithNewBlocks,
-          newHand,
-          gameState.boosters
-        );
-
         setGameState(prev => ({
           ...prev,
           grid: gridWithNewBlocks,
@@ -4036,13 +4171,13 @@ export const Game: React.FC = () => {
           moves: newMoves,
           hand: newHand,
           selectedPieceIndex: null,
-          gameOver: noValidMoves, // Only immediate game over if no valid moves
+          gameOver: false,
           combo: 1
         }));
 
-        // Show popup if out of moves (but still have valid moves)
-        if (outOfMoves && !noValidMoves) {
-          setTimeout(() => setShowOutOfMovesPopup(true), 300);
+        // Show popup if out of moves
+        if (outOfMoves) {
+          openContinueOffer('out_of_moves', 300);
         }
       }
     } else {
@@ -4772,7 +4907,10 @@ export const Game: React.FC = () => {
 
               // Check if this cell is being animated (flying in) - use ref for synchronous check
               const isFlying = cell && activeIncomingIds.tileIds.has(cell.id);
-              const isBoosterFlying = booster && activeIncomingIds.boosterIds.has(booster.id);
+              const isBoosterFlying = booster && (
+                activeIncomingIds.boosterIds.has(booster.id)
+                || incomingBoosterSpawnIds.has(booster.id)
+              );
               const hideStaticForIntro = isIntroArrivalActive;
 
               // Calculate background
@@ -5449,10 +5587,14 @@ export const Game: React.FC = () => {
               </div>
             ) : (
               <div className="text-center">
-                <div className="text-5xl mb-4">⏰</div>
-                <h3 className="text-2xl font-black text-white mb-2">Out of Moves!</h3>
+                <div className="text-5xl mb-4">{continueOfferReason === 'no_valid_moves' ? '⚠️' : '⏰'}</div>
+                <h3 className="text-2xl font-black text-white mb-2">
+                  {continueOfferReason === 'no_valid_moves' ? 'No Valid Moves!' : 'Out of Moves!'}
+                </h3>
                 <p className="text-slate-400 text-sm mb-6">
-                  Watch an ad to get 5 more moves and keep playing!
+                  {continueOfferReason === 'no_valid_moves'
+                    ? 'Watch an ad to spawn a Superball and clear space.'
+                    : 'Watch an ad to get 5 more moves and keep playing!'}
                 </p>
 
                 <div className="flex flex-col gap-3">
@@ -5462,7 +5604,7 @@ export const Game: React.FC = () => {
                       text-white font-black py-4 rounded-2xl transition-all active:scale-95 shadow-lg flex items-center justify-center gap-2"
                   >
                     <i className="fa-solid fa-play"></i>
-                    Continue (+5 Moves)
+                    {continueOfferReason === 'no_valid_moves' ? 'Continue (Superball)' : 'Continue (+5 Moves)'}
                   </button>
                   <button
                     onClick={handleGameOverFromMoves}
