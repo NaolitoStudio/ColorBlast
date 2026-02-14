@@ -1711,6 +1711,15 @@ export const Game: React.FC = () => {
     return true; // No tiles but boosters exist
   };
 
+  const shouldTriggerNoValidMovesGameOver = (
+    grid: GameState['grid'],
+    hand: GameState['hand'],
+    boosters: Booster[]
+  ): boolean => {
+    if (boosters.length > 0) return false;
+    return isGameOver(grid, hand, boosters);
+  };
+
   // Handle case when only boosters remain using the same ALL CLEAR cadence:
   // show feedback, wait, then refill through incoming animation (no instant pop-in).
   const handleOnlyBoostersLeft = useCallback(() => {
@@ -1739,44 +1748,19 @@ export const Game: React.FC = () => {
           return prev;
         }
 
-        // Regenerate tiles around existing boosters, avoiding booster positions.
-        const boosterPositions = new Set(prev.boosters.map((b) => `${b.x},${b.y}`));
+        // Use the same refill curve as new-level generation and then carve booster cells out.
         const levelConfig = getLevelConfig(prev.level);
-        const levelColors = getColorsForLevel(prev.level);
-        const newGrid: (typeof prev.grid) = prev.grid.map((row) => [...row]);
+        const boosterPoints = prev.boosters.map((booster) => ({ x: booster.x, y: booster.y }));
+        const newGrid = removeTilesAtPoints(
+          createRandomGrid(levelConfig.gridFill, prev.level),
+          boosterPoints
+        );
         const addedBlocks: AddedBlock[] = [];
-
         for (let y = 0; y < GRID_SIZE; y++) {
           for (let x = 0; x < GRID_SIZE; x++) {
-            if (newGrid[y][x] === null && !boosterPositions.has(`${x},${y}`) && Math.random() < levelConfig.gridFill) {
-              const tile = {
-                color: levelColors[Math.floor(Math.random() * levelColors.length)],
-                id: `regen-${Date.now()}-${x}-${y}`
-              };
-              newGrid[y][x] = tile;
-              addedBlocks.push({ x, y, color: tile.color, id: tile.id });
-            }
-          }
-        }
-
-        if (addedBlocks.length < 10) {
-          const emptyPositions: { x: number; y: number }[] = [];
-          for (let y = 0; y < GRID_SIZE; y++) {
-            for (let x = 0; x < GRID_SIZE; x++) {
-              if (newGrid[y][x] === null && !boosterPositions.has(`${x},${y}`)) {
-                emptyPositions.push({ x, y });
-              }
-            }
-          }
-          emptyPositions.sort(() => Math.random() - 0.5);
-          for (let i = 0; i < Math.min(15, emptyPositions.length) && addedBlocks.length < 15; i++) {
-            const pos = emptyPositions[i];
-            const tile = {
-              color: levelColors[Math.floor(Math.random() * levelColors.length)],
-              id: `regen-${Date.now()}-${pos.x}-${pos.y}`
-            };
-            newGrid[pos.y][pos.x] = tile;
-            addedBlocks.push({ x: pos.x, y: pos.y, color: tile.color, id: tile.id });
+            const tile = newGrid[y][x];
+            if (!tile) continue;
+            addedBlocks.push({ x, y, color: tile.color, id: tile.id });
           }
         }
 
@@ -2020,7 +2004,11 @@ export const Game: React.FC = () => {
           } else {
             pendingAllClearAfterDestructionRef.current = false;
             pendingOnlyBoostersAfterDestructionRef.current = false;
-            nextState.gameOver = isGameOver(nextState.grid, nextState.hand, nextState.boosters);
+            nextState.gameOver = shouldTriggerNoValidMovesGameOver(
+              nextState.grid,
+              nextState.hand,
+              nextState.boosters
+            );
           }
         } else {
           pendingAllClearAfterDestructionRef.current = false;
@@ -2259,7 +2247,11 @@ export const Game: React.FC = () => {
         } else {
           pendingAllClearAfterDestructionRef.current = false;
           pendingOnlyBoostersAfterDestructionRef.current = false;
-          nextState.gameOver = isGameOver(nextState.grid, nextState.hand, nextState.boosters);
+          nextState.gameOver = shouldTriggerNoValidMovesGameOver(
+            nextState.grid,
+            nextState.hand,
+            nextState.boosters
+          );
         }
       } else {
         pendingAllClearAfterDestructionRef.current = false;
@@ -2714,7 +2706,7 @@ export const Game: React.FC = () => {
     return false;
   };
 
-  const canPieceCreateMatchWithBoosters = (
+  const canPieceCreateExternalMatchWithBoosters = (
     grid: GameState['grid'],
     piece: PieceData,
     boosters: Booster[]
@@ -2736,10 +2728,27 @@ export const Game: React.FC = () => {
         });
 
         const groups = findMatchGroups(testGrid);
-        const createsOwnMatch = groups.some(group =>
-          group.some(point => placedKeys.has(`${point.x},${point.y}`))
-        );
-        if (createsOwnMatch) {
+        const createsExternalMatch = groups.some((group) => {
+          let hasPlacedTile = false;
+          let hasPreexistingTile = false;
+
+          for (const point of group) {
+            const key = `${point.x},${point.y}`;
+            if (placedKeys.has(key)) {
+              hasPlacedTile = true;
+            } else if (grid[point.y][point.x] !== null) {
+              hasPreexistingTile = true;
+            }
+
+            if (hasPlacedTile && hasPreexistingTile) {
+              return true;
+            }
+          }
+
+          return false;
+        });
+
+        if (createsExternalMatch) {
           return true;
         }
       }
@@ -2759,7 +2768,7 @@ export const Game: React.FC = () => {
 
     while (hand.length < 3 && attempts < maxAttempts) {
       const candidate = generatePiece(grid, level, { excludedShapeSignatures: usedShapeSignatures });
-      if (canPieceCreateMatchWithBoosters(grid, candidate, boosters)) {
+      if (canPieceCreateExternalMatchWithBoosters(grid, candidate, boosters)) {
         hand.push(candidate);
         usedShapeSignatures.add(getPieceShapeSignature(candidate));
       }
@@ -2779,6 +2788,26 @@ export const Game: React.FC = () => {
 
     return hand.length === 3 ? hand : generateValidHand(grid, level);
   };
+
+  const handInteractionState = useMemo(() => (
+    gameState.hand.map((piece) => {
+      if (!piece) {
+        return {
+          canFit: false,
+          canCreateExternalMatch: false,
+          isBlocked: false
+        };
+      }
+
+      const canFit = canPieceFitWithBoosters(gameState.grid, piece, gameState.boosters);
+      const canCreateExternalMatch = canPieceCreateExternalMatchWithBoosters(gameState.grid, piece, gameState.boosters);
+      return {
+        canFit,
+        canCreateExternalMatch,
+        isBlocked: !canCreateExternalMatch && !canFit
+      };
+    })
+  ), [gameState.boosters, gameState.grid, gameState.hand]);
 
   const executeTrash = () => {
     // Start shake animation for all pieces
@@ -3526,7 +3555,11 @@ export const Game: React.FC = () => {
           return { ...prev, grid: finalGrid, clearingTiles: [] };
         }
 
-        const lost = !prev.levelComplete && isGameOver(finalGrid, prev.hand, prev.boosters);
+        const lost = !prev.levelComplete && shouldTriggerNoValidMovesGameOver(
+          finalGrid,
+          prev.hand,
+          prev.boosters
+        );
         return { ...prev, grid: finalGrid, clearingTiles: [], gameOver: lost };
       });
     }, 400);
@@ -3577,7 +3610,11 @@ export const Game: React.FC = () => {
     if (shuffleAnimations.length > 0 || shufflePhase || superballAnimation) return;
     if (celebrating || showLevelPopup || showAllClear || showOutOfMovesPopup) return;
 
-    const noValidPlacements = isGameOver(gameState.grid, gameState.hand, gameState.boosters);
+    const noValidPlacements = shouldTriggerNoValidMovesGameOver(
+      gameState.grid,
+      gameState.hand,
+      gameState.boosters
+    );
     if (!noValidPlacements) return;
 
     setGameState(prev => (
@@ -3608,6 +3645,7 @@ export const Game: React.FC = () => {
   const startDragging = (e: React.PointerEvent, index: number) => {
     if (isGameplayInputLocked) return;
     if (gameState.hand[index] === null || gameState.gameOver || celebrating || showLevelPopup || showAllClear || trashingAllPieces) return;
+    if (handInteractionState[index]?.isBlocked) return;
 
     // Calculate cell size based on actual board dimensions
     const placement = getBoardPlacementMetrics();
@@ -3948,7 +3986,11 @@ export const Game: React.FC = () => {
               return { ...prev, grid: finalGrid, clearingTiles: [] };
             }
 
-            const lost = !prev.levelComplete && isGameOver(finalGrid, prev.hand, prev.boosters);
+            const lost = !prev.levelComplete && shouldTriggerNoValidMovesGameOver(
+              finalGrid,
+              prev.hand,
+              prev.boosters
+            );
             return {
               ...prev,
               grid: finalGrid,
@@ -3981,7 +4023,11 @@ export const Game: React.FC = () => {
           pendingIncomingBlocksRef.current = result.addedBlocks;
         }
 
-        const noValidMoves = isGameOver(gridWithNewBlocks, newHand, gameState.boosters);
+        const noValidMoves = shouldTriggerNoValidMovesGameOver(
+          gridWithNewBlocks,
+          newHand,
+          gameState.boosters
+        );
 
         setGameState(prev => ({
           ...prev,
@@ -5111,42 +5157,57 @@ export const Game: React.FC = () => {
           className="flex justify-around items-center w-full h-full"
           style={{ gap: `${responsive.rackSlotGap}px` }}
         >
-          {gameState.hand.map((piece, index) => (
-            <div
-              key={piece?.id || `empty-${index}`}
-              ref={el => pieceRefs.current[index] = el}
-              className={`
-                flex items-center justify-center
-                relative transition-all duration-300
-                ${piece === null && fadingBoxIndex?.index !== index ? 'opacity-0 pointer-events-none' : ''}
-                ${fadingBoxIndex?.index === index && fadingBoxIndex.fading ? 'opacity-0' : ''}
-                ${fadingInPieceIndex === index ? 'opacity-0' : ''}
-                ${trashingAllPieces && piece ? 'piece-trashing' : ''}
-              `}
-              style={{
-                width: `${responsive.rackSlotWidth}px`,
-                aspectRatio: `${responsive.rackSlotAspectRatio}`,
-                animationDelay: trashingAllPieces ? `${index * 0.05}s` : undefined
-              }}
-            >
-              <img
-                src={UI_ASSETS.CONTAINER_NEXT_PIECE}
-                alt=""
-                className="absolute inset-0 w-full h-full object-contain pointer-events-none"
-                draggable={false}
-              />
-              {/* Piece (draggable area) */}
+          {gameState.hand.map((piece, index) => {
+            const interactionState = handInteractionState[index];
+            const isBlocked = Boolean(piece) && Boolean(interactionState?.isBlocked);
+            const isSelectable = Boolean(piece) && !isBlocked;
+
+            return (
               <div
-                onPointerDown={(e) => startDragging(e, index)}
-                className="flex items-center justify-center w-full h-full touch-none cursor-grab"
-                style={{ transform: 'scale(0.95)' }}
+                key={piece?.id || `empty-${index}`}
+                ref={el => pieceRefs.current[index] = el}
+                className={`
+                  flex items-center justify-center
+                  relative transition-all duration-300
+                  ${piece === null && fadingBoxIndex?.index !== index ? 'opacity-0 pointer-events-none' : ''}
+                  ${fadingBoxIndex?.index === index && fadingBoxIndex.fading ? 'opacity-0' : ''}
+                  ${fadingInPieceIndex === index ? 'opacity-0' : ''}
+                  ${trashingAllPieces && piece ? 'piece-trashing' : ''}
+                `}
+                style={{
+                  width: `${responsive.rackSlotWidth}px`,
+                  aspectRatio: `${responsive.rackSlotAspectRatio}`,
+                  animationDelay: trashingAllPieces ? `${index * 0.05}s` : undefined
+                }}
               >
-                {piece && gameState.selectedPieceIndex !== index && returningPiece?.index !== index && (
-                  <PiecePreview piece={piece} active={false} containerSize={responsive.rackPieceSize * 0.82} />
-                )}
+                <img
+                  src={UI_ASSETS.CONTAINER_NEXT_PIECE}
+                  alt=""
+                  className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+                  draggable={false}
+                />
+                {/* Piece (draggable area) */}
+                <div
+                  onPointerDown={(e) => {
+                    if (!isSelectable) return;
+                    startDragging(e, index);
+                  }}
+                  className={`
+                    flex items-center justify-center w-full h-full touch-none
+                    ${isSelectable ? 'cursor-grab' : (piece ? 'cursor-not-allowed' : 'cursor-default')}
+                  `}
+                  style={{
+                    transform: 'scale(0.95)',
+                    opacity: isBlocked ? 0.45 : 1
+                  }}
+                >
+                  {piece && gameState.selectedPieceIndex !== index && returningPiece?.index !== index && (
+                    <PiecePreview piece={piece} active={false} containerSize={responsive.rackPieceSize * 0.82} />
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
         </ResponsiveNineSlicePanel>
       </div>

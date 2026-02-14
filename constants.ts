@@ -53,6 +53,9 @@ export const COLORS = [
   Color.ORANGE
 ];
 
+const GRID_FILL_CAP = 0.35;
+const POST_LEVEL5_GRID_FILL_STEP = 0.005;
+
 // Level definitions with objectives
 // Level 1: 2 colors, Level 2: 3 colors, Level 3+: 4 colors
 // All targets fixed at 15 per color
@@ -102,7 +105,7 @@ export const LEVELS: LevelConfig[] = [
       { color: Color.GREEN, target: 15 },
       { color: Color.YELLOW, target: 15 }
     ],
-    gridFill: 0.50,
+    gridFill: 0.33,
     lockedTileChance: 0.25
   }
 ];
@@ -120,7 +123,10 @@ export const getLevelConfig = (level: number): LevelConfig => {
       color: obj.color,
       target: 15
     })),
-    gridFill: Math.min(baseLevel.gridFill + (level - LEVELS.length) * 0.02, 0.55),
+    gridFill: Math.min(
+      baseLevel.gridFill + (level - LEVELS.length) * POST_LEVEL5_GRID_FILL_STEP,
+      GRID_FILL_CAP
+    ),
     lockedTileChance: Math.min((baseLevel.lockedTileChance ?? 0) + (level - LEVELS.length) * 0.05, 0.40)
   };
 };
