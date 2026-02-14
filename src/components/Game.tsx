@@ -1147,6 +1147,7 @@ export const Game: React.FC = () => {
   const [watchingMovesAd, setWatchingMovesAd] = useState(false);
   const [continueOfferReason, setContinueOfferReason] = useState<ContinueOfferReason>('out_of_moves');
   const [trashingAllPieces, setTrashingAllPieces] = useState(false);
+  const [incomingBoosterSpawnIds, setIncomingBoosterSpawnIds] = useState<Set<string>>(new Set());
   const [superballAnimations, setSuperballAnimations] = useState<SuperballAnimationState[]>([]);
   const [destructionRuntime, setDestructionRuntime] = useState<DestructionRuntimeState>(() => (
     toRuntimeState([], [])
@@ -1193,7 +1194,6 @@ export const Game: React.FC = () => {
   const bootIntroQueuedRef = useRef(false);
   const pendingIncomingBlocksRef = useRef<AddedBlock[] | null>(null);
   const pendingIncomingBoostersRef = useRef<Booster[] | null>(null);
-  const hiddenIncomingBoosterIdsRef = useRef<Set<string>>(new Set());
   const pendingAllClearIntroRef = useRef<{
     grid: GameState['grid'];
     boosters: Booster[];
@@ -1426,7 +1426,7 @@ export const Game: React.FC = () => {
     pendingIncomingBlocksRef.current = null;
     pendingIncomingBoostersRef.current = null;
     pendingAllClearIntroRef.current = null;
-    hiddenIncomingBoosterIdsRef.current = new Set();
+    setIncomingBoosterSpawnIds(new Set());
     setIsInteractionLocked(true);
     setShowLoadingScreen(true);
     setIsIntroArrivalActive(false);
@@ -1809,13 +1809,18 @@ export const Game: React.FC = () => {
     return levelColors[0] ?? Color.BLUE;
   };
 
-  const applyNoValidMovesContinue = (prev: GameState): GameState => {
+  const buildNoValidMovesContinueOutcome = (prev: GameState): {
+    nextState: GameState;
+    incomingBoosterId?: string;
+  } => {
     const spawnTarget = getContinueSuperballSpawnPoint(prev.grid, prev.boosters);
     if (!spawnTarget) {
       return {
-        ...prev,
-        gameOver: false,
-        selectedPieceIndex: null
+        nextState: {
+          ...prev,
+          gameOver: false,
+          selectedPieceIndex: null
+        }
       };
     }
 
@@ -1833,19 +1838,16 @@ export const Game: React.FC = () => {
       color: getPreferredContinueSuperballColor(nextGrid, prev.level)
     };
     const nextBoosters = [...prev.boosters, continueBooster];
-    pendingAllClearIntroRef.current = {
-      grid: nextGrid,
-      boosters: nextBoosters,
-      minLoadingMs: 50,
-      showLoadingOverlay: false
-    };
-
+    pendingIncomingBoostersRef.current = [continueBooster];
     return {
-      ...prev,
-      grid: nextGrid,
-      boosters: nextBoosters,
-      gameOver: false,
-      selectedPieceIndex: null
+      nextState: {
+        ...prev,
+        grid: nextGrid,
+        boosters: nextBoosters,
+        gameOver: false,
+        selectedPieceIndex: null
+      },
+      incomingBoosterId: continueBooster.id
     };
   };
 
@@ -3000,7 +3002,16 @@ export const Game: React.FC = () => {
     // Simulate watching an ad
     setTimeout(() => {
       if (continueOfferReason === 'no_valid_moves') {
-        setGameState(prev => applyNoValidMovesContinue(prev));
+        const continuation = buildNoValidMovesContinueOutcome(gameStateRef.current);
+        if (continuation.incomingBoosterId) {
+          setIncomingBoosterSpawnIds((prev) => {
+            const next = new Set(prev);
+            next.add(continuation.incomingBoosterId!);
+            return next;
+          });
+        }
+        gameStateRef.current = continuation.nextState;
+        setGameState(continuation.nextState);
         audio.play('createBooster');
       } else {
         setGameState(prev => ({ ...prev, moves: 5, gameOver: false })); // Give 5 more moves
