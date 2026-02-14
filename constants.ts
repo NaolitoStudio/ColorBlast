@@ -53,7 +53,7 @@ export const COLORS = [
   Color.ORANGE
 ];
 
-const GRID_FILL_CAP = 0.35;
+const GRID_FILL_CAP = 0.55;
 const POST_LEVEL5_GRID_FILL_STEP = 0.005;
 
 // Level definitions with objectives
